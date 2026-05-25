@@ -88,8 +88,8 @@ const ADD_BOOK = `
 `
 
 const SEARCH_BOOK = `
-  query SearchBook($query: String!) {
-    search(query: $query, query_type: "Book", per_page: 1) {
+  query SearchBook($query: String!, $queryType: String!) {
+    search(query: $query, query_type: $queryType, per_page: 1) {
       results
     }
   }
@@ -250,26 +250,38 @@ interface SearchBookResponse {
 }
 
 export interface HardcoverSearchResult {
-  bookId:  number
-  title:   string
-  authors: string
+  bookId:     number
+  title:      string
+  authors:    string
+  resultType: 'Book' | 'Series'
 }
 
-/** Search Hardcover by title + optional author, returning the top match for confirmation. */
+async function searchHardcover(query: string, queryType: 'Book' | 'Series'): Promise<HardcoverSearchResult | null> {
+  const resp = await hardcover<SearchBookResponse>(SEARCH_BOOK, { query, queryType })
+  const raw  = resp.data.search.results
+  const results = typeof raw === 'string' ? JSON.parse(raw) : raw
+  const doc = results?.hits?.[0]?.document
+  if (!doc) return null
+  return {
+    bookId:     Number(doc.id),
+    title:      doc.title,
+    authors:    (doc.author_names ?? []).join(', '),
+    resultType: queryType,
+  }
+}
+
+/** Search Hardcover by title + optional author.
+ *  Tries "Book" first; falls back to "Series" so series-named entries still match. */
 export function useSearchHardcoverBook() {
   return useMutation({
     mutationFn: async ({ title, author }: { title: string; author?: string }): Promise<HardcoverSearchResult> => {
       const query = author ? `${title} ${author}` : title
-      const resp  = await hardcover<SearchBookResponse>(SEARCH_BOOK, { query })
-      const raw   = resp.data.search.results
-      const results = typeof raw === 'string' ? JSON.parse(raw) : raw
-      const doc = results?.hits?.[0]?.document
-      if (!doc) throw new Error(`No results found for "${title}"`)
-      return {
-        bookId:  Number(doc.id),
-        title:   doc.title,
-        authors: (doc.author_names ?? []).join(', '),
-      }
+      const book  = await searchHardcover(query, 'Book')
+      if (book) return book
+      // Fall back to series search (e.g. "Stormlight Archive", "The First Law")
+      const series = await searchHardcover(title, 'Series')
+      if (series) return series
+      throw new Error(`No results found for "${title}"`)
     },
   })
 }

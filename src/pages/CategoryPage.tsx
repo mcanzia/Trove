@@ -327,6 +327,9 @@ export default function CategoryPage() {
                   <span className="text-xs text-foreground leading-tight">
                     "{pendingAdd.title}"
                     {pendingAdd.authors ? ` · ${pendingAdd.authors}` : ''}
+                    {pendingAdd.resultType === 'Series' && (
+                      <span className="ml-1 text-amber-500">(Series — re-search for a specific book)</span>
+                    )}
                   </span>
                   <div className="flex items-center gap-2 flex-wrap">
                     <button
