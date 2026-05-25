@@ -202,7 +202,7 @@ export function useAddBookByTitle() {
       const results = typeof raw === 'string' ? JSON.parse(raw) : raw
       const found = results?.hits?.[0]?.document
       if (!found) throw new Error(`"${title}" not found on Hardcover`)
-      return hardcover(ADD_BOOK, { bookId: found.id, statusId })
+      return hardcover(ADD_BOOK, { bookId: Number(found.id), statusId })
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
   })
