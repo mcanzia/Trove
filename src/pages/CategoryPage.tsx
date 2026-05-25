@@ -2,6 +2,7 @@ import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { useState, useMemo, useRef, useCallback, useEffect, lazy, Suspense } from 'react'
 import { toSlug } from '@/lib/utils'
 import { type ColumnDef } from '@tanstack/react-table'
+
 import { ChevronDown, MapPin, Table2, Map as MapIcon } from 'lucide-react'
 import { useAnalysisItems } from '@/hooks/useAnalysisItems'
 import { useCategories } from '@/hooks/useCategories'
@@ -18,11 +19,10 @@ import {
   useSearchHardcoverBook,
   useAddBookByTitle,
   findHardcoverBook,
-  HARDCOVER_STATUS,
   type HardcoverSearchResult,
 } from '@/hooks/useHardcoverBooks'
-import { StarRating } from '@/components/StarRating'
 import { HardcoverSearchModal } from '@/components/HardcoverSearchModal'
+import { BookCard } from '@/components/BookCard'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
@@ -301,104 +301,18 @@ export default function CategoryPage() {
   // Two-step add: first search (shows match for confirmation), then add
   const [addingTitle, setAddingTitle]           = useState<string | null>(null)
   const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null)
+  // itemId currently being added to Hardcover (shows spinner in row)
+  const [addingItemId, setAddingItemId]         = useState<number | null>(null)
+  // Hardcover status filter for book grid ('all' | 'untracked' | '1'–'4')
+  const [statusFilter, setStatusFilter]         = useState<string>('all')
   // Modal state
   const [modalContext, setModalContext] = useState<{ title: string; itemId: number; author: string } | null>(null)
   const [modalResults, setModalResults] = useState<HardcoverSearchResult[]>([])
   const [modalSearching, setModalSearching] = useState(false)
 
-  const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
-    if (!isBooks || !hardcoverLibrary) return []
-
-    const lookup = (title: string, itemId: number) =>
-      findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(itemId))
-
-    return [
-      {
-        id: '_hc_status',
-        header: 'Status',
-        accessorFn: (row) =>
-          lookup(String(row.item_data.book_title ?? ''), row.id)?.statusId ?? null,
-        cell: ({ row }) => {
-          const title  = String(row.original.item_data.book_title ?? '')
-          const itemId = row.original.id
-          const book   = lookup(title, itemId)
-          if (!book) {
-            const isOpening = addingTitle === title
-            const author = String(row.original.item_data.author ?? '')
-            return (
-              <button
-                disabled={isOpening}
-                onClick={() => {
-                  setAddingTitle(title)
-                  setModalContext({ title, itemId, author })
-                  setModalResults([])
-                  setModalSearching(true)
-                  searchBook.mutate(
-                    { title, author },
-                    {
-                      onSuccess: (results) => setModalResults(results),
-                      onSettled: () => { setModalSearching(false); setAddingTitle(null) },
-                    },
-                  )
-                }}
-                className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {isOpening ? 'Searching…' : '+ Add to Hardcover'}
-              </button>
-            )
-          }
-          if (updatingStatusId === book.userBookId) {
-            return (
-              <span className="text-xs text-muted-foreground animate-pulse">
-                {HARDCOVER_STATUS[book.statusId] ?? '…'}
-              </span>
-            )
-          }
-          return (
-            <select
-              value={book.statusId}
-              onChange={(e) => {
-                setUpdatingStatusId(book.userBookId)
-                updateStatus.mutate(
-                  { userBookId: book.userBookId, statusId: Number(e.target.value) },
-                  { onSettled: () => setUpdatingStatusId(null) },
-                )
-              }}
-              className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none"
-            >
-              {Object.entries(HARDCOVER_STATUS).map(([id, label]) => (
-                <option key={id} value={id}>{label}</option>
-              ))}
-            </select>
-          )
-        },
-        enableSorting: true,
-      },
-      {
-        id: '_hc_rating',
-        header: 'My Rating',
-        accessorFn: (row) =>
-          lookup(String(row.item_data.book_title ?? ''), row.id)?.rating ?? null,
-        cell: ({ row }) => {
-          const book = lookup(String(row.original.item_data.book_title ?? ''), row.original.id)
-          if (!book) return <span className="text-muted-foreground text-xs">—</span>
-          return (
-            <StarRating
-              value={book.rating}
-              onChange={(rating) =>
-                updateRating.mutate({ userBookId: book.userBookId, rating })
-              }
-            />
-          )
-        },
-        enableSorting: true,
-      },
-    ]
-  }, [isBooks, hardcoverLibrary, hardcoverLinks, updateRating, updateStatus, searchBook, addBook, upsertLink, addingTitle, updatingStatusId])
-
   const columns = useMemo(
-    () => [...buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick), ...hardcoverColumns],
-    [category?.output_fields, hiddenKeys, handleLocationClick, hardcoverColumns],
+    () => buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick),
+    [category?.output_fields, hiddenKeys, handleLocationClick],
   )
 
   // Flag lookup for the dropdown
@@ -431,19 +345,24 @@ export default function CategoryPage() {
             })
           }}
           onSelect={(result) => {
-            const { title, itemId } = modalContext
-            setAddingTitle(title)
+            const { itemId } = modalContext
+            setModalContext(null)
+            setAddingItemId(itemId)
+
             addBook.mutate(
               { bookId: result.bookId, statusId: 1 },
               {
                 onSuccess: () => {
-                  upsertLink.mutate({
-                    analysisItemId:  itemId,
-                    hardcoverBookId: result.bookId,
-                    bookTitle:       result.title,
-                  })
+                  upsertLink.mutate(
+                    {
+                      analysisItemId:  itemId,
+                      hardcoverBookId: result.bookId,
+                      bookTitle:       result.title,
+                    },
+                    { onSettled: () => setAddingItemId(null) },
+                  )
                 },
-                onSettled: () => { setAddingTitle(null); setModalContext(null) },
+                onError: () => setAddingItemId(null),
               },
             )
           }}
@@ -466,75 +385,110 @@ export default function CategoryPage() {
         </div>
 
         {/* Controls */}
-        <div className="flex flex-wrap items-center gap-3 mb-6">
-          {/* Platform filter */}
-          <div className="flex gap-2">
-            {(['all', 'reddit', 'instagram'] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setParam('platform', p === 'all' ? null : p)}
-                className={`px-3 py-1 rounded-full text-sm border transition-colors ${
-                  (p === 'all' && !platform) || platform === p
-                    ? 'bg-primary text-primary-foreground border-primary'
-                    : 'bg-background text-muted-foreground border-border hover:border-primary/50'
-                }`}
-              >
-                {p.charAt(0).toUpperCase() + p.slice(1)}
-              </button>
-            ))}
+        <div className="flex flex-col gap-3 mb-6">
+          {/* Row 1: platform pills + group-by + search + map toggle */}
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Platform filter */}
+            <div className="flex gap-2">
+              {(['all', 'reddit', 'instagram'] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setParam('platform', p === 'all' ? null : p)}
+                  className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+                    (p === 'all' && !platform) || platform === p
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'bg-background text-muted-foreground border-border hover:border-primary/50'
+                  }`}
+                >
+                  {p.charAt(0).toUpperCase() + p.slice(1)}
+                </button>
+              ))}
+            </div>
+
+            {/* Group-by dropdown */}
+            {level1Options.length > 0 && (
+              <div className="relative">
+                <select
+                  value={activeGroup}
+                  onChange={(e) => { setParam('group', e.target.value); setFlyTarget(null) }}
+                  className="appearance-none pl-3 pr-8 py-1.5 text-sm rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+                >
+                  {level1Options.map((opt) => (
+                    <option key={opt} value={opt}>{getOptionLabel(opt)}</option>
+                  ))}
+                </select>
+                <ChevronDown
+                  size={14}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+                />
+              </div>
+            )}
+
+            {/* Search */}
+            <input
+              type="search"
+              placeholder="Search…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="ml-auto px-3 py-1.5 text-sm rounded-md border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-56"
+            />
+
+            {/* Map / Table toggle — only for hierarchical group_by categories */}
+            {isHierarchical && (
+              <div className="flex rounded-md border border-border overflow-hidden">
+                <button
+                  onClick={() => setParam('view', 'table')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
+                    viewMode === 'table'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  <Table2 size={14} /> Table
+                </button>
+                <button
+                  onClick={() => setParam('view', 'map')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
+                    viewMode === 'map'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-background text-muted-foreground hover:bg-muted'
+                  }`}
+                >
+                  <MapIcon size={14} /> Map
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* Group-by dropdown */}
-          {level1Options.length > 0 && (
-            <div className="relative">
-              <select
-                value={activeGroup}
-                onChange={(e) => { setParam('group', e.target.value); setFlyTarget(null) }}
-                className="appearance-none pl-3 pr-8 py-1.5 text-sm rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
-              >
-                {level1Options.map((opt) => (
-                  <option key={opt} value={opt}>{getOptionLabel(opt)}</option>
-                ))}
-              </select>
-              <ChevronDown
-                size={14}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
-              />
-            </div>
-          )}
-
-          {/* Search */}
-          <input
-            type="search"
-            placeholder="Search…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="ml-auto px-3 py-1.5 text-sm rounded-md border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-56"
-          />
-
-          {/* Map / Table toggle — only for hierarchical group_by categories */}
-          {isHierarchical && (
-            <div className="flex rounded-md border border-border overflow-hidden">
-              <button
-                onClick={() => setParam('view', 'table')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
-                  viewMode === 'table'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-background text-muted-foreground hover:bg-muted'
-                }`}
-              >
-                <Table2 size={14} /> Table
-              </button>
-              <button
-                onClick={() => setParam('view', 'map')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
-                  viewMode === 'map'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-background text-muted-foreground hover:bg-muted'
-                }`}
-              >
-                <MapIcon size={14} /> Map
-              </button>
+          {/* Row 2: Hardcover status filter (books only) */}
+          {isBooks && (
+            <div className="flex flex-wrap gap-2">
+              {([
+                { key: 'all',       label: 'All',              cls: 'border-border'                                                                                          },
+                { key: 'untracked', label: 'Not Added',        cls: 'border-gray-300 data-[active]:bg-white data-[active]:text-gray-700'                                     },
+                { key: '1',         label: 'Want to Read',     cls: 'border-blue-300 data-[active]:bg-blue-50 data-[active]:text-blue-700 data-[active]:border-blue-400'     },
+                { key: '2',         label: 'Reading',          cls: 'border-yellow-300 data-[active]:bg-yellow-50 data-[active]:text-yellow-700 data-[active]:border-yellow-400' },
+                { key: '3',         label: 'Read',             cls: 'border-green-300 data-[active]:bg-green-50 data-[active]:text-green-700 data-[active]:border-green-400' },
+                { key: '4',         label: 'Did Not Finish',   cls: 'border-gray-400 data-[active]:bg-gray-200 data-[active]:text-gray-700 data-[active]:border-gray-500'    },
+              ] as const).map(({ key, label, cls }) => {
+                const active = statusFilter === key
+                return (
+                  <button
+                    key={key}
+                    data-active={active ? '' : undefined}
+                    onClick={() => setStatusFilter(key)}
+                    className={`px-3 py-1 rounded-full text-sm border transition-colors ${cls} ${
+                      active
+                        ? key === 'all'
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : ''
+                        : 'bg-background text-muted-foreground hover:border-foreground/30'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                )
+              })}
             </div>
           )}
         </div>
@@ -573,8 +527,77 @@ export default function CategoryPage() {
           </div>
         )}
 
-        {/* Flat view: single table (language, or no grouping) */}
-        {!cityGroups && items && (
+        {/* Books: card grid */}
+        {!cityGroups && items && isBooks && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {(singleGroupField ? level1Items : items)
+              .filter((item) => {
+                // Text search
+                if (search) {
+                  const s = search.toLowerCase()
+                  const textMatch =
+                    String(item.item_data.book_title  ?? '').toLowerCase().includes(s) ||
+                    String(item.item_data.author      ?? '').toLowerCase().includes(s) ||
+                    String(item.item_data.genre       ?? '').toLowerCase().includes(s) ||
+                    String(item.item_data.why_read_it ?? '').toLowerCase().includes(s)
+                  if (!textMatch) return false
+                }
+                // Hardcover status filter
+                if (statusFilter !== 'all') {
+                  const title = String(item.item_data.book_title ?? '')
+                  const book  = hardcoverLibrary
+                    ? findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(item.id))
+                    : undefined
+                  if (statusFilter === 'untracked') return !book
+                  if (!book) return false
+                  return String(book.statusId) === statusFilter
+                }
+                return true
+              })
+              .map((item) => {
+                const title  = String(item.item_data.book_title ?? '')
+                const author = String(item.item_data.author ?? '')
+                const book   = hardcoverLibrary
+                  ? findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(item.id))
+                  : undefined
+                return (
+                  <BookCard
+                    key={item.id}
+                    item={item}
+                    book={book}
+                    isAdding={addingItemId === item.id}
+                    isSearching={addingTitle === title}
+                    isUpdatingStatus={book != null && updatingStatusId === book.userBookId}
+                    onAddClick={() => {
+                      setAddingTitle(title)
+                      setModalContext({ title, itemId: item.id, author })
+                      setModalResults([])
+                      setModalSearching(true)
+                      searchBook.mutate(
+                        { title, author },
+                        {
+                          onSuccess: (results) => setModalResults(results),
+                          onSettled: () => { setModalSearching(false); setAddingTitle(null) },
+                        },
+                      )
+                    }}
+                    onRatingChange={(rating) => book && updateRating.mutate({ userBookId: book.userBookId, rating })}
+                    onStatusChange={(statusId) => {
+                      if (!book) return
+                      setUpdatingStatusId(book.userBookId)
+                      updateStatus.mutate(
+                        { userBookId: book.userBookId, statusId },
+                        { onSettled: () => setUpdatingStatusId(null) },
+                      )
+                    }}
+                  />
+                )
+              })}
+          </div>
+        )}
+
+        {/* Flat view: single table (language, or no grouping, non-books) */}
+        {!cityGroups && items && !isBooks && (
           <DataTable
             columns={columns}
             data={singleGroupField ? level1Items : items}

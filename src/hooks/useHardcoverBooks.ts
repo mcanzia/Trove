@@ -208,8 +208,9 @@ export function useUpdateHardcoverRating() {
       if (prev) qc.setQueryData(['hardcover-books'], patchLibrary(prev, userBookId, { rating }))
       return { prev }
     },
+    // Roll back on error; no refetch on settled — the optimistic patch is the
+    // source of truth and a post-mutation refetch can race and revert the value.
     onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(['hardcover-books'], ctx.prev) },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
   })
 }
 
@@ -225,7 +226,6 @@ export function useUpdateHardcoverStatus() {
       return { prev }
     },
     onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(['hardcover-books'], ctx.prev) },
-    onSettled: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
   })
 }
 
@@ -267,7 +267,9 @@ async function searchHardcoverMulti(query: string, queryType: 'Book' | 'Series')
       bookId:     Number(doc.id),
       title:      String(doc.title ?? ''),
       authors:    ((doc.author_names as string[]) ?? []).join(', '),
-      coverUrl:   (doc.image as string | null) ?? null,
+      coverUrl:   typeof doc.image === 'string'
+        ? doc.image
+        : (doc.image as { url?: string } | null)?.url ?? null,
       resultType: queryType,
     }
   })
