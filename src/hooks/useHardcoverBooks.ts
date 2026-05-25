@@ -65,9 +65,9 @@ const GET_MY_BOOKS = `
 
 const UPDATE_RATING = `
   mutation UpdateRating($userBookId: Int!, $rating: numeric) {
-    update_user_book_by_pk(
-      pk_columns: { id: $userBookId }
-      _set: { rating: $rating }
+    insert_user_book(
+      object: { id: $userBookId, rating: $rating }
+      on_conflict: { constraint: user_books_pkey, update_columns: [rating] }
     ) {
       id
       rating
@@ -77,9 +77,9 @@ const UPDATE_RATING = `
 
 const UPDATE_STATUS = `
   mutation UpdateStatus($userBookId: Int!, $statusId: Int!) {
-    update_user_book_by_pk(
-      pk_columns: { id: $userBookId }
-      _set: { status_id: $statusId }
+    insert_user_book(
+      object: { id: $userBookId, status_id: $statusId }
+      on_conflict: { constraint: user_books_pkey, update_columns: [status_id] }
     ) {
       id
       status_id
