@@ -287,6 +287,7 @@ export default function CategoryPage() {
   const [searchingTitle, setSearchingTitle]   = useState<string | null>(null)
   const [pendingAdd, setPendingAdd]           = useState<{ originalTitle: string; itemId: number } & HardcoverSearchResult | null>(null)
   const [addingTitle, setAddingTitle]         = useState<string | null>(null)
+  const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null)
 
   const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
     if (!isBooks || !hardcoverLibrary) return []
@@ -365,12 +366,23 @@ export default function CategoryPage() {
               </button>
             )
           }
+          if (updatingStatusId === book.userBookId) {
+            return (
+              <span className="text-xs text-muted-foreground animate-pulse">
+                {HARDCOVER_STATUS[book.statusId] ?? '…'}
+              </span>
+            )
+          }
           return (
             <select
               value={book.statusId}
-              onChange={(e) =>
-                updateStatus.mutate({ userBookId: book.userBookId, statusId: Number(e.target.value) })
-              }
+              onChange={(e) => {
+                setUpdatingStatusId(book.userBookId)
+                updateStatus.mutate(
+                  { userBookId: book.userBookId, statusId: Number(e.target.value) },
+                  { onSettled: () => setUpdatingStatusId(null) },
+                )
+              }}
               className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none"
             >
               {Object.entries(HARDCOVER_STATUS).map(([id, label]) => (
@@ -401,7 +413,7 @@ export default function CategoryPage() {
         enableSorting: true,
       },
     ]
-  }, [isBooks, hardcoverLibrary, hardcoverLinks, updateRating, updateStatus, searchBook, addBook, upsertLink, searchingTitle, pendingAdd, addingTitle])
+  }, [isBooks, hardcoverLibrary, hardcoverLinks, updateRating, updateStatus, searchBook, addBook, upsertLink, searchingTitle, pendingAdd, addingTitle, updatingStatusId])
 
   const columns = useMemo(
     () => [...buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick), ...hardcoverColumns],

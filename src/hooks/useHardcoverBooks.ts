@@ -178,12 +178,38 @@ export function useHardcoverBooks() {
   })
 }
 
+/** Patch a single book in the cached library by userBookId without a refetch. */
+function patchLibrary(
+  library: HardcoverLibrary,
+  userBookId: number,
+  patch: Partial<HardcoverBook>,
+): HardcoverLibrary {
+  const newByTitle  = new Map(library.byTitle)
+  const newByBookId = new Map(library.byBookId)
+  for (const [key, book] of newByTitle) {
+    if (book.userBookId === userBookId) {
+      const updated = { ...book, ...patch }
+      newByTitle.set(key, updated)
+      newByBookId.set(book.bookId, updated)
+      break
+    }
+  }
+  return { byTitle: newByTitle, byBookId: newByBookId }
+}
+
 export function useUpdateHardcoverRating() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ userBookId, rating }: { userBookId: number; rating: number | null }) =>
       hardcover(UPDATE_RATING, { userBookId, rating }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
+    onMutate: async ({ userBookId, rating }) => {
+      await qc.cancelQueries({ queryKey: ['hardcover-books'] })
+      const prev = qc.getQueryData<HardcoverLibrary>(['hardcover-books'])
+      if (prev) qc.setQueryData(['hardcover-books'], patchLibrary(prev, userBookId, { rating }))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(['hardcover-books'], ctx.prev) },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
   })
 }
 
@@ -192,7 +218,14 @@ export function useUpdateHardcoverStatus() {
   return useMutation({
     mutationFn: ({ userBookId, statusId }: { userBookId: number; statusId: number }) =>
       hardcover(UPDATE_STATUS, { userBookId, statusId }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
+    onMutate: async ({ userBookId, statusId }) => {
+      await qc.cancelQueries({ queryKey: ['hardcover-books'] })
+      const prev = qc.getQueryData<HardcoverLibrary>(['hardcover-books'])
+      if (prev) qc.setQueryData(['hardcover-books'], patchLibrary(prev, userBookId, { statusId }))
+      return { prev }
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(['hardcover-books'], ctx.prev) },
+    onSettled: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
   })
 }
 
