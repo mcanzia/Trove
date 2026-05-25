@@ -93,6 +93,15 @@ const ADD_BOOK = `
   }
 `
 
+const SEARCH_BOOK = `
+  query SearchBook($title: String!) {
+    books(where: { title: { _ilike: $title } }, limit: 1) {
+      id
+      title
+    }
+  }
+`
+
 // ── Normalise title for fuzzy matching ───────────────────────────────────────
 
 export function normaliseTitle(title: string): string {
@@ -106,7 +115,7 @@ export function normaliseTitle(title: string): string {
 
 interface GqlResponse {
   data: {
-    me: {
+    me: Array<{
       user_books: Array<{
         id:        number
         status_id: number
@@ -117,7 +126,7 @@ interface GqlResponse {
           contributions: Array<{ author: { name: string } }>
         }
       }>
-    }
+    }>
   }
 }
 
@@ -127,7 +136,7 @@ export function useHardcoverBooks() {
     queryFn: async (): Promise<Map<string, HardcoverBook>> => {
       const resp = await hardcover<GqlResponse>(GET_MY_BOOKS)
       const map = new Map<string, HardcoverBook>()
-      for (const ub of resp.data.me.user_books) {
+      for (const ub of resp.data.me[0].user_books) {
         const book: HardcoverBook = {
           userBookId: ub.id,
           bookId:     ub.book.id,
@@ -168,6 +177,24 @@ export function useAddHardcoverBook() {
   return useMutation({
     mutationFn: ({ bookId, statusId }: { bookId: number; statusId: number }) =>
       hardcover(ADD_BOOK, { bookId, statusId }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
+  })
+}
+
+interface SearchBookResponse {
+  data: { books: Array<{ id: number; title: string }> }
+}
+
+/** Search Hardcover for a book by title, then add it to the user's library. */
+export function useAddBookByTitle() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ title, statusId }: { title: string; statusId: number }) => {
+      const search = await hardcover<SearchBookResponse>(SEARCH_BOOK, { title: `%${title}%` })
+      const found = search.data.books[0]
+      if (!found) throw new Error(`"${title}" not found on Hardcover`)
+      return hardcover(ADD_BOOK, { bookId: found.id, statusId })
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
   })
 }

@@ -12,6 +12,7 @@ import {
   useHardcoverBooks,
   useUpdateHardcoverRating,
   useUpdateHardcoverStatus,
+  useAddBookByTitle,
   normaliseTitle,
   HARDCOVER_STATUS,
 } from '@/hooks/useHardcoverBooks'
@@ -274,6 +275,7 @@ export default function CategoryPage() {
   const { data: hardcoverBooks } = useHardcoverBooks()
   const updateRating = useUpdateHardcoverRating()
   const updateStatus = useUpdateHardcoverStatus()
+  const addBookByTitle = useAddBookByTitle()
 
   const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
     if (!isBooks || !hardcoverBooks) return []
@@ -287,9 +289,21 @@ export default function CategoryPage() {
           return hardcoverBooks.get(key)?.statusId ?? null
         },
         cell: ({ row }) => {
-          const key = normaliseTitle(String(row.original.item_data.title ?? ''))
+          const title = String(row.original.item_data.title ?? '')
+          const key = normaliseTitle(title)
           const book = hardcoverBooks.get(key)
-          if (!book) return <span className="text-muted-foreground text-xs">—</span>
+          if (!book) {
+            const isPending = addBookByTitle.isPending && addBookByTitle.variables?.title === title
+            return (
+              <button
+                disabled={isPending}
+                onClick={() => addBookByTitle.mutate({ title, statusId: 1 })}
+                className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {isPending ? 'Adding…' : '+ Add to Hardcover'}
+              </button>
+            )
+          }
           return (
             <select
               value={book.statusId}
