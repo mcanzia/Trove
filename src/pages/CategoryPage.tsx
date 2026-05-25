@@ -276,6 +276,8 @@ export default function CategoryPage() {
   const updateRating = useUpdateHardcoverRating()
   const updateStatus = useUpdateHardcoverStatus()
   const addBookByTitle = useAddBookByTitle()
+  // Track which title is currently being added so each button has isolated loading state
+  const [addingTitle, setAddingTitle] = useState<string | null>(null)
 
   const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
     if (!isBooks || !hardcoverBooks) return []
@@ -293,12 +295,18 @@ export default function CategoryPage() {
           const key = normaliseTitle(title)
           const book = hardcoverBooks.get(key)
           if (!book) {
-            const isPending = addBookByTitle.isPending && addBookByTitle.variables?.title === title
+            const isPending = addingTitle === title
             return (
               <button
                 disabled={isPending}
-                onClick={() => addBookByTitle.mutate({ title, statusId: 1 })}
-                className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                onClick={() => {
+                  setAddingTitle(title)
+                  addBookByTitle.mutate(
+                    { title, statusId: 1 },
+                    { onSettled: () => setAddingTitle(null) },
+                  )
+                }}
+                className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 {isPending ? 'Adding…' : '+ Add to Hardcover'}
               </button>
@@ -343,7 +351,7 @@ export default function CategoryPage() {
         enableSorting: true,
       },
     ]
-  }, [isBooks, hardcoverBooks, updateRating, updateStatus])
+  }, [isBooks, hardcoverBooks, updateRating, updateStatus, addBookByTitle, addingTitle, setAddingTitle])
 
   const columns = useMemo(
     () => [...buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick), ...hardcoverColumns],
