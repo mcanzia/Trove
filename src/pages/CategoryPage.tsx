@@ -292,11 +292,11 @@ export default function CategoryPage() {
         id: '_hc_status',
         header: 'Status',
         accessorFn: (row) => {
-          const key = normaliseTitle(String(row.item_data.title ?? ''))
+          const key = normaliseTitle(String(row.item_data.book_title ?? ''))
           return hardcoverBooks.get(key)?.statusId ?? null
         },
         cell: ({ row }) => {
-          const title = String(row.original.item_data.title ?? '')
+          const title = String(row.original.item_data.book_title ?? '')
           const key = normaliseTitle(title)
           const book = hardcoverBooks.get(key)
           if (!book) {
@@ -374,11 +374,11 @@ export default function CategoryPage() {
         id: '_hc_rating',
         header: 'My Rating',
         accessorFn: (row) => {
-          const key = normaliseTitle(String(row.item_data.title ?? ''))
+          const key = normaliseTitle(String(row.item_data.book_title ?? ''))
           return hardcoverBooks.get(key)?.rating ?? null
         },
         cell: ({ row }) => {
-          const key = normaliseTitle(String(row.original.item_data.title ?? ''))
+          const key = normaliseTitle(String(row.original.item_data.book_title ?? ''))
           const book = hardcoverBooks.get(key)
           if (!book) return <span className="text-muted-foreground text-xs">—</span>
           return (
