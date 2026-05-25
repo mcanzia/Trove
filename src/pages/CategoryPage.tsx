@@ -1,5 +1,5 @@
 import { useParams, Link, useSearchParams } from 'react-router-dom'
-import { useState, useMemo, useRef, useCallback, lazy, Suspense } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect, lazy, Suspense } from 'react'
 import { toSlug } from '@/lib/utils'
 import { type ColumnDef } from '@tanstack/react-table'
 import { ChevronDown, MapPin, Table2, Map as MapIcon } from 'lucide-react'
@@ -12,6 +12,7 @@ import {
   useHardcoverBooks,
   useHardcoverLinks,
   useUpsertHardcoverLink,
+  useDeleteHardcoverLink,
   useUpdateHardcoverRating,
   useUpdateHardcoverStatus,
   useSearchHardcoverBook,
@@ -283,6 +284,19 @@ export default function CategoryPage() {
   const searchBook      = useSearchHardcoverBook()
   const addBook         = useAddBookByTitle()
   const upsertLink      = useUpsertHardcoverLink()
+  const deleteLink      = useDeleteHardcoverLink()
+
+  // Whenever the library and links are both loaded, remove any links
+  // whose bookId no longer exists in the Hardcover library (book was removed).
+  useEffect(() => {
+    if (!hardcoverLibrary || !hardcoverLinks) return
+    for (const [itemId, bookId] of hardcoverLinks) {
+      if (!hardcoverLibrary.byBookId.has(bookId)) {
+        deleteLink.mutate(itemId)
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hardcoverLibrary, hardcoverLinks])
   // Two-step add: first search (shows match for confirmation), then add
   const [searchingTitle, setSearchingTitle]   = useState<string | null>(null)
   const [pendingAdd, setPendingAdd]           = useState<{ originalTitle: string; itemId: number } & HardcoverSearchResult | null>(null)

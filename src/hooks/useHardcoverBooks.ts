@@ -313,6 +313,21 @@ export function useHardcoverLinks() {
   })
 }
 
+/** Deletes stale hardcover_links rows whose bookId is no longer in the library. */
+export function useDeleteHardcoverLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (analysisItemId: number) => {
+      const { error } = await supabase
+        .from('hardcover_links')
+        .delete()
+        .eq('analysis_item_id', analysisItemId)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-links'] }),
+  })
+}
+
 /** Upserts an analysis_item_id → hardcover_book_id mapping. */
 export function useUpsertHardcoverLink() {
   const qc = useQueryClient()
