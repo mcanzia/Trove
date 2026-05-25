@@ -96,14 +96,7 @@ const ADD_BOOK = `
 const SEARCH_BOOK = `
   query SearchBook($query: String!) {
     search(query: $query, query_type: "Book", per_page: 1) {
-      results {
-        hits {
-          document {
-            id
-            title
-          }
-        }
-      }
+      results
     }
   }
 `
@@ -190,6 +183,7 @@ export function useAddHardcoverBook() {
 interface SearchBookResponse {
   data: {
     search: {
+      // results is a raw JSON scalar from the Hardcover API
       results: {
         hits: Array<{ document: { id: number; title: string } }>
       }
@@ -203,7 +197,10 @@ export function useAddBookByTitle() {
   return useMutation({
     mutationFn: async ({ title, statusId }: { title: string; statusId: number }) => {
       const search = await hardcover<SearchBookResponse>(SEARCH_BOOK, { query: title })
-      const found = search.data.search.results.hits[0]?.document
+      // results comes back as a JSON scalar — parse it if it's a string
+      const raw = search.data.search.results
+      const results = typeof raw === 'string' ? JSON.parse(raw) : raw
+      const found = results?.hits?.[0]?.document
       if (!found) throw new Error(`"${title}" not found on Hardcover`)
       return hardcover(ADD_BOOK, { bookId: found.id, statusId })
     },
