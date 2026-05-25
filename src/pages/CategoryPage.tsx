@@ -12,9 +12,11 @@ import {
   useHardcoverBooks,
   useUpdateHardcoverRating,
   useUpdateHardcoverStatus,
+  useSearchHardcoverBook,
   useAddBookByTitle,
   normaliseTitle,
   HARDCOVER_STATUS,
+  type HardcoverSearchResult,
 } from '@/hooks/useHardcoverBooks'
 import { StarRating } from '@/components/StarRating'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
@@ -273,11 +275,14 @@ export default function CategoryPage() {
   // ── Hardcover integration (Books Worth Reading only) ──────────────────────
   const isBooks = categoryName === 'Books Worth Reading'
   const { data: hardcoverBooks } = useHardcoverBooks()
-  const updateRating = useUpdateHardcoverRating()
-  const updateStatus = useUpdateHardcoverStatus()
-  const addBookByTitle = useAddBookByTitle()
-  // Track which title is currently being added so each button has isolated loading state
-  const [addingTitle, setAddingTitle] = useState<string | null>(null)
+  const updateRating  = useUpdateHardcoverRating()
+  const updateStatus  = useUpdateHardcoverStatus()
+  const searchBook    = useSearchHardcoverBook()
+  const addBook       = useAddBookByTitle()
+  // Two-step add: first search (shows match for confirmation), then add
+  const [searchingTitle, setSearchingTitle]   = useState<string | null>(null)
+  const [pendingAdd, setPendingAdd]           = useState<{ originalTitle: string } & HardcoverSearchResult | null>(null)
+  const [addingTitle, setAddingTitle]         = useState<string | null>(null)
 
   const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
     if (!isBooks || !hardcoverBooks) return []
@@ -295,20 +300,57 @@ export default function CategoryPage() {
           const key = normaliseTitle(title)
           const book = hardcoverBooks.get(key)
           if (!book) {
-            const isPending = addingTitle === title
+            // Step 2: awaiting confirmation
+            if (pendingAdd?.originalTitle === title) {
+              return (
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs text-foreground leading-tight">
+                    "{pendingAdd.title}"
+                    {pendingAdd.authors ? ` · ${pendingAdd.authors}` : ''}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      disabled={addingTitle === title}
+                      onClick={() => {
+                        setAddingTitle(title)
+                        addBook.mutate(
+                          { bookId: pendingAdd.bookId, statusId: 1 },
+                          { onSettled: () => { setAddingTitle(null); setPendingAdd(null) } },
+                        )
+                      }}
+                      className="text-xs cursor-pointer text-green-600 hover:text-green-500 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {addingTitle === title ? 'Adding…' : 'Confirm'}
+                    </button>
+                    <button
+                      onClick={() => setPendingAdd(null)}
+                      className="text-xs cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+            // Step 1: search
+            const isSearching = searchingTitle === title
+            const author = String(row.original.item_data.author ?? '')
             return (
               <button
-                disabled={isPending}
+                disabled={isSearching}
                 onClick={() => {
-                  setAddingTitle(title)
-                  addBookByTitle.mutate(
-                    { title, statusId: 1 },
-                    { onSettled: () => setAddingTitle(null) },
+                  setSearchingTitle(title)
+                  searchBook.mutate(
+                    { title, author },
+                    {
+                      onSuccess: (result) => { setPendingAdd({ originalTitle: title, ...result }) },
+                      onSettled: () => setSearchingTitle(null),
+                    },
                   )
                 }}
                 className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {isPending ? 'Adding…' : '+ Add to Hardcover'}
+                {isSearching ? 'Searching…' : '+ Add to Hardcover'}
               </button>
             )
           }
@@ -351,7 +393,7 @@ export default function CategoryPage() {
         enableSorting: true,
       },
     ]
-  }, [isBooks, hardcoverBooks, updateRating, updateStatus, addBookByTitle, addingTitle, setAddingTitle])
+  }, [isBooks, hardcoverBooks, updateRating, updateStatus, searchBook, addBook, searchingTitle, pendingAdd, addingTitle])
 
   const columns = useMemo(
     () => [...buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick), ...hardcoverColumns],

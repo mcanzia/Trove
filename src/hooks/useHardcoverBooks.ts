@@ -185,25 +185,43 @@ interface SearchBookResponse {
     search: {
       // results is a raw JSON scalar from the Hardcover API
       results: {
-        hits: Array<{ document: { id: number; title: string } }>
+        hits: Array<{ document: { id: number; title: string; author_names?: string[] } }>
       }
     }
   }
 }
 
-/** Search Hardcover for a book by title, then add it to the user's library. */
+export interface HardcoverSearchResult {
+  bookId:  number
+  title:   string
+  authors: string
+}
+
+/** Search Hardcover by title + optional author, returning the top match for confirmation. */
+export function useSearchHardcoverBook() {
+  return useMutation({
+    mutationFn: async ({ title, author }: { title: string; author?: string }): Promise<HardcoverSearchResult> => {
+      const query = author ? `${title} ${author}` : title
+      const resp  = await hardcover<SearchBookResponse>(SEARCH_BOOK, { query })
+      const raw   = resp.data.search.results
+      const results = typeof raw === 'string' ? JSON.parse(raw) : raw
+      const doc = results?.hits?.[0]?.document
+      if (!doc) throw new Error(`No results found for "${title}"`)
+      return {
+        bookId:  Number(doc.id),
+        title:   doc.title,
+        authors: (doc.author_names ?? []).join(', '),
+      }
+    },
+  })
+}
+
+/** Add a book to the user's Hardcover library by its known bookId. */
 export function useAddBookByTitle() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ title, statusId }: { title: string; statusId: number }) => {
-      const search = await hardcover<SearchBookResponse>(SEARCH_BOOK, { query: title })
-      // results comes back as a JSON scalar — parse it if it's a string
-      const raw = search.data.search.results
-      const results = typeof raw === 'string' ? JSON.parse(raw) : raw
-      const found = results?.hits?.[0]?.document
-      if (!found) throw new Error(`"${title}" not found on Hardcover`)
-      return hardcover(ADD_BOOK, { bookId: Number(found.id), statusId })
-    },
+    mutationFn: ({ bookId, statusId }: { bookId: number; statusId: number }) =>
+      hardcover(ADD_BOOK, { bookId, statusId }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
   })
 }
