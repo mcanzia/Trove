@@ -65,22 +65,24 @@ const GET_MY_BOOKS = `
 
 const UPDATE_RATING = `
   mutation UpdateRating($userBookId: Int!, $rating: numeric) {
-    update_user_book(
-      where: { id: { _eq: $userBookId } }
+    update_user_book_by_pk(
+      pk_columns: { id: $userBookId }
       _set: { rating: $rating }
     ) {
-      returning { id rating }
+      id
+      rating
     }
   }
 `
 
 const UPDATE_STATUS = `
   mutation UpdateStatus($userBookId: Int!, $statusId: Int!) {
-    update_user_book(
-      where: { id: { _eq: $userBookId } }
+    update_user_book_by_pk(
+      pk_columns: { id: $userBookId }
       _set: { status_id: $statusId }
     ) {
-      returning { id status_id }
+      id
+      status_id
     }
   }
 `
