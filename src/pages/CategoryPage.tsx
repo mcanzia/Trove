@@ -8,6 +8,14 @@ import { useCategories } from '@/hooks/useCategories'
 import { DataTable } from '@/components/DataTable'
 import { getLanguageFlag } from '@/lib/languageFlags'
 import { getCountryFlag } from '@/lib/countryFlags'
+import {
+  useHardcoverBooks,
+  useUpdateHardcoverRating,
+  useUpdateHardcoverStatus,
+  normaliseTitle,
+  HARDCOVER_STATUS,
+} from '@/hooks/useHardcoverBooks'
+import { StarRating } from '@/components/StarRating'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
@@ -261,9 +269,71 @@ export default function CategoryPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHierarchical, setParam])
 
+  // ── Hardcover integration (Books Worth Reading only) ──────────────────────
+  const isBooks = categoryName === 'Books Worth Reading'
+  const { data: hardcoverBooks } = useHardcoverBooks()
+  const updateRating = useUpdateHardcoverRating()
+  const updateStatus = useUpdateHardcoverStatus()
+
+  const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
+    if (!isBooks || !hardcoverBooks) return []
+
+    return [
+      {
+        id: '_hc_status',
+        header: 'Status',
+        accessorFn: (row) => {
+          const key = normaliseTitle(String(row.item_data.title ?? ''))
+          return hardcoverBooks.get(key)?.statusId ?? null
+        },
+        cell: ({ row }) => {
+          const key = normaliseTitle(String(row.original.item_data.title ?? ''))
+          const book = hardcoverBooks.get(key)
+          if (!book) return <span className="text-muted-foreground text-xs">—</span>
+          return (
+            <select
+              value={book.statusId}
+              onChange={(e) =>
+                updateStatus.mutate({ userBookId: book.userBookId, statusId: Number(e.target.value) })
+              }
+              className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none"
+            >
+              {Object.entries(HARDCOVER_STATUS).map(([id, label]) => (
+                <option key={id} value={id}>{label}</option>
+              ))}
+            </select>
+          )
+        },
+        enableSorting: true,
+      },
+      {
+        id: '_hc_rating',
+        header: 'My Rating',
+        accessorFn: (row) => {
+          const key = normaliseTitle(String(row.item_data.title ?? ''))
+          return hardcoverBooks.get(key)?.rating ?? null
+        },
+        cell: ({ row }) => {
+          const key = normaliseTitle(String(row.original.item_data.title ?? ''))
+          const book = hardcoverBooks.get(key)
+          if (!book) return <span className="text-muted-foreground text-xs">—</span>
+          return (
+            <StarRating
+              value={book.rating}
+              onChange={(rating) =>
+                updateRating.mutate({ userBookId: book.userBookId, rating })
+              }
+            />
+          )
+        },
+        enableSorting: true,
+      },
+    ]
+  }, [isBooks, hardcoverBooks, updateRating, updateStatus])
+
   const columns = useMemo(
-    () => buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick),
-    [category?.output_fields, hiddenKeys, handleLocationClick],
+    () => [...buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick), ...hardcoverColumns],
+    [category?.output_fields, hiddenKeys, handleLocationClick, hardcoverColumns],
   )
 
   // Flag lookup for the dropdown
