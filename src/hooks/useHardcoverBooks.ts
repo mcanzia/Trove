@@ -2,8 +2,8 @@
  * Fetches the current user's Hardcover library via the hardcover-proxy
  * Edge Function and exposes helpers for updating ratings.
  *
- * Books are keyed by normalised title so CategoryPage can look them up
- * against analysis items without needing ISBNs.
+ * Primary lookup uses hardcover_links (analysis_item_id → bookId) for
+ * reliable ID-based matching. Title matching is a fallback only.
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -111,19 +111,24 @@ export function normaliseTitle(title: string): string {
 }
 
 /**
- * Look up a book in the Hardcover map by normalised title.
- * Falls back to a substring match so e.g. "Stormlight Archive"
- * matches "The Stormlight Archive Series 6 Books Collection Set…"
+ * Look up a book given an optional stored bookId (preferred) or by title (fallback).
+ * Title fallback uses substring matching to handle verbose Hardcover titles.
  */
 export function findHardcoverBook(
-  books: Map<string, HardcoverBook>,
+  library: HardcoverLibrary,
   title: string,
+  hardcoverBookId?: number,
 ): HardcoverBook | undefined {
+  // 1. ID match — exact and reliable
+  if (hardcoverBookId != null) {
+    const byId = library.byBookId.get(hardcoverBookId)
+    if (byId) return byId
+  }
+  // 2. Exact normalised title match
   const key = normaliseTitle(title)
-  // 1. Exact normalised match
-  if (books.has(key)) return books.get(key)
-  // 2. Substring match — one key contains the other
-  for (const [hcKey, book] of books) {
+  if (library.byTitle.has(key)) return library.byTitle.get(key)
+  // 3. Substring fallback for mismatched verbose titles
+  for (const [hcKey, book] of library.byTitle) {
     if (hcKey.includes(key) || key.includes(hcKey)) return book
   }
   return undefined
@@ -148,12 +153,18 @@ interface GqlResponse {
   }
 }
 
+export interface HardcoverLibrary {
+  byTitle: Map<string, HardcoverBook>   // normalised title → book (fallback)
+  byBookId: Map<number, HardcoverBook>  // bookId → book (primary when link exists)
+}
+
 export function useHardcoverBooks() {
   return useQuery({
     queryKey: ['hardcover-books'],
-    queryFn: async (): Promise<Map<string, HardcoverBook>> => {
+    queryFn: async (): Promise<HardcoverLibrary> => {
       const resp = await hardcover<GqlResponse>(GET_MY_BOOKS)
-      const map = new Map<string, HardcoverBook>()
+      const byTitle  = new Map<string, HardcoverBook>()
+      const byBookId = new Map<number, HardcoverBook>()
       for (const ub of resp.data.me[0].user_books) {
         const book: HardcoverBook = {
           userBookId: ub.id,
@@ -163,9 +174,10 @@ export function useHardcoverBooks() {
           statusId:   ub.status_id,
           rating:     ub.rating,
         }
-        map.set(normaliseTitle(ub.book.title), book)
+        byTitle.set(normaliseTitle(ub.book.title), book)
+        byBookId.set(ub.book.id, book)
       }
-      return map
+      return { byTitle, byBookId }
     },
     staleTime: 1000 * 60 * 5,
     retry: false, // don't retry if token is missing
@@ -242,5 +254,36 @@ export function useAddBookByTitle() {
     mutationFn: ({ bookId, statusId }: { bookId: number; statusId: number }) =>
       hardcover(ADD_BOOK, { bookId, statusId }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-books'] }),
+  })
+}
+
+// ── Hardcover links (analysis_item_id → hardcover_book_id) ───────────────────
+
+/** Returns a Map<analysisItemId, hardcoverBookId> for all stored links. */
+export function useHardcoverLinks() {
+  return useQuery({
+    queryKey: ['hardcover-links'],
+    queryFn: async (): Promise<Map<number, number>> => {
+      const { data, error } = await supabase
+        .from('hardcover_links')
+        .select('analysis_item_id, hardcover_book_id')
+      if (error) throw error
+      return new Map((data ?? []).map((r) => [r.analysis_item_id as number, r.hardcover_book_id as number]))
+    },
+    staleTime: 1000 * 60 * 10,
+  })
+}
+
+/** Upserts an analysis_item_id → hardcover_book_id mapping. */
+export function useUpsertHardcoverLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async ({ analysisItemId, hardcoverBookId }: { analysisItemId: number; hardcoverBookId: number }) => {
+      const { error } = await supabase
+        .from('hardcover_links')
+        .upsert({ analysis_item_id: analysisItemId, hardcover_book_id: hardcoverBookId })
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-links'] }),
   })
 }

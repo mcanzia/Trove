@@ -10,6 +10,8 @@ import { getLanguageFlag } from '@/lib/languageFlags'
 import { getCountryFlag } from '@/lib/countryFlags'
 import {
   useHardcoverBooks,
+  useHardcoverLinks,
+  useUpsertHardcoverLink,
   useUpdateHardcoverRating,
   useUpdateHardcoverStatus,
   useSearchHardcoverBook,
@@ -274,29 +276,34 @@ export default function CategoryPage() {
 
   // ── Hardcover integration (Books Worth Reading only) ──────────────────────
   const isBooks = categoryName === 'Books Worth Reading'
-  const { data: hardcoverBooks } = useHardcoverBooks()
-  const updateRating  = useUpdateHardcoverRating()
-  const updateStatus  = useUpdateHardcoverStatus()
-  const searchBook    = useSearchHardcoverBook()
-  const addBook       = useAddBookByTitle()
+  const { data: hardcoverLibrary }  = useHardcoverBooks()
+  const { data: hardcoverLinks }    = useHardcoverLinks()
+  const updateRating    = useUpdateHardcoverRating()
+  const updateStatus    = useUpdateHardcoverStatus()
+  const searchBook      = useSearchHardcoverBook()
+  const addBook         = useAddBookByTitle()
+  const upsertLink      = useUpsertHardcoverLink()
   // Two-step add: first search (shows match for confirmation), then add
   const [searchingTitle, setSearchingTitle]   = useState<string | null>(null)
-  const [pendingAdd, setPendingAdd]           = useState<{ originalTitle: string } & HardcoverSearchResult | null>(null)
+  const [pendingAdd, setPendingAdd]           = useState<{ originalTitle: string; itemId: number } & HardcoverSearchResult | null>(null)
   const [addingTitle, setAddingTitle]         = useState<string | null>(null)
 
   const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
-    if (!isBooks || !hardcoverBooks) return []
+    if (!isBooks || !hardcoverLibrary) return []
+
+    const lookup = (title: string, itemId: number) =>
+      findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(itemId))
 
     return [
       {
         id: '_hc_status',
         header: 'Status',
-        accessorFn: (row) => {
-          return findHardcoverBook(hardcoverBooks, String(row.item_data.book_title ?? ''))?.statusId ?? null
-        },
+        accessorFn: (row) =>
+          lookup(String(row.item_data.book_title ?? ''), row.id)?.statusId ?? null,
         cell: ({ row }) => {
-          const title = String(row.original.item_data.book_title ?? '')
-          const book = findHardcoverBook(hardcoverBooks, title)
+          const title  = String(row.original.item_data.book_title ?? '')
+          const itemId = row.original.id
+          const book   = lookup(title, itemId)
           if (!book) {
             // Step 2: awaiting confirmation
             if (pendingAdd?.originalTitle === title) {
@@ -313,7 +320,13 @@ export default function CategoryPage() {
                         setAddingTitle(title)
                         addBook.mutate(
                           { bookId: pendingAdd.bookId, statusId: 1 },
-                          { onSettled: () => { setAddingTitle(null); setPendingAdd(null) } },
+                          {
+                            onSuccess: () => {
+                              // Store the ID link so future lookups are exact
+                              upsertLink.mutate({ analysisItemId: pendingAdd.itemId, hardcoverBookId: pendingAdd.bookId })
+                            },
+                            onSettled: () => { setAddingTitle(null); setPendingAdd(null) },
+                          },
                         )
                       }}
                       className="text-xs cursor-pointer text-green-600 hover:text-green-500 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -341,7 +354,7 @@ export default function CategoryPage() {
                   searchBook.mutate(
                     { title, author },
                     {
-                      onSuccess: (result) => { setPendingAdd({ originalTitle: title, ...result }) },
+                      onSuccess: (result) => { setPendingAdd({ originalTitle: title, itemId, ...result }) },
                       onSettled: () => setSearchingTitle(null),
                     },
                   )
@@ -371,11 +384,10 @@ export default function CategoryPage() {
       {
         id: '_hc_rating',
         header: 'My Rating',
-        accessorFn: (row) => {
-          return findHardcoverBook(hardcoverBooks, String(row.item_data.book_title ?? ''))?.rating ?? null
-        },
+        accessorFn: (row) =>
+          lookup(String(row.item_data.book_title ?? ''), row.id)?.rating ?? null,
         cell: ({ row }) => {
-          const book = findHardcoverBook(hardcoverBooks, String(row.original.item_data.book_title ?? ''))
+          const book = lookup(String(row.original.item_data.book_title ?? ''), row.original.id)
           if (!book) return <span className="text-muted-foreground text-xs">—</span>
           return (
             <StarRating
@@ -389,7 +401,7 @@ export default function CategoryPage() {
         enableSorting: true,
       },
     ]
-  }, [isBooks, hardcoverBooks, updateRating, updateStatus, searchBook, addBook, searchingTitle, pendingAdd, addingTitle])
+  }, [isBooks, hardcoverLibrary, hardcoverLinks, updateRating, updateStatus, searchBook, addBook, upsertLink, searchingTitle, pendingAdd, addingTitle])
 
   const columns = useMemo(
     () => [...buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick), ...hardcoverColumns],
