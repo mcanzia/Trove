@@ -94,10 +94,16 @@ const ADD_BOOK = `
 `
 
 const SEARCH_BOOK = `
-  query SearchBook($title: String!) {
-    books(where: { title: { _ilike: $title } }, limit: 1) {
-      id
-      title
+  query SearchBook($query: String!) {
+    search(query: $query, query_type: "Book", per_page: 1) {
+      results {
+        hits {
+          document {
+            id
+            title
+          }
+        }
+      }
     }
   }
 `
@@ -182,7 +188,13 @@ export function useAddHardcoverBook() {
 }
 
 interface SearchBookResponse {
-  data: { books: Array<{ id: number; title: string }> }
+  data: {
+    search: {
+      results: {
+        hits: Array<{ document: { id: number; title: string } }>
+      }
+    }
+  }
 }
 
 /** Search Hardcover for a book by title, then add it to the user's library. */
@@ -190,8 +202,8 @@ export function useAddBookByTitle() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async ({ title, statusId }: { title: string; statusId: number }) => {
-      const search = await hardcover<SearchBookResponse>(SEARCH_BOOK, { title: `%${title}%` })
-      const found = search.data.books[0]
+      const search = await hardcover<SearchBookResponse>(SEARCH_BOOK, { query: title })
+      const found = search.data.search.results.hits[0]?.document
       if (!found) throw new Error(`"${title}" not found on Hardcover`)
       return hardcover(ADD_BOOK, { bookId: found.id, statusId })
     },
