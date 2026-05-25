@@ -89,7 +89,7 @@ const ADD_BOOK = `
 
 const SEARCH_BOOK = `
   query SearchBook($query: String!, $queryType: String!) {
-    search(query: $query, query_type: $queryType, per_page: 1) {
+    search(query: $query, query_type: $queryType, per_page: 5) {
       results
     }
   }
@@ -253,35 +253,42 @@ export interface HardcoverSearchResult {
   bookId:     number
   title:      string
   authors:    string
+  coverUrl:   string | null
   resultType: 'Book' | 'Series'
 }
 
-async function searchHardcover(query: string, queryType: 'Book' | 'Series'): Promise<HardcoverSearchResult | null> {
+async function searchHardcoverMulti(query: string, queryType: 'Book' | 'Series'): Promise<HardcoverSearchResult[]> {
   const resp = await hardcover<SearchBookResponse>(SEARCH_BOOK, { query, queryType })
   const raw  = resp.data.search.results
   const results = typeof raw === 'string' ? JSON.parse(raw) : raw
-  const doc = results?.hits?.[0]?.document
-  if (!doc) return null
-  return {
-    bookId:     Number(doc.id),
-    title:      doc.title,
-    authors:    (doc.author_names ?? []).join(', '),
-    resultType: queryType,
-  }
+  return (results?.hits ?? []).map((hit: { document: Record<string, unknown> }) => {
+    const doc = hit.document
+    return {
+      bookId:     Number(doc.id),
+      title:      String(doc.title ?? ''),
+      authors:    ((doc.author_names as string[]) ?? []).join(', '),
+      coverUrl:   (doc.image as string | null) ?? null,
+      resultType: queryType,
+    }
+  })
 }
 
 /** Search Hardcover by title + optional author.
- *  Tries "Book" first; falls back to "Series" so series-named entries still match. */
+ *  Runs Book and Series searches in parallel and returns combined results. */
 export function useSearchHardcoverBook() {
   return useMutation({
-    mutationFn: async ({ title, author }: { title: string; author?: string }): Promise<HardcoverSearchResult> => {
-      const query = author ? `${title} ${author}` : title
-      const book  = await searchHardcover(query, 'Book')
-      if (book) return book
-      // Fall back to series search (e.g. "Stormlight Archive", "The First Law")
-      const series = await searchHardcover(title, 'Series')
-      if (series) return series
-      throw new Error(`No results found for "${title}"`)
+    mutationFn: async ({ title, author }: { title: string; author?: string }): Promise<HardcoverSearchResult[]> => {
+      const bookQuery   = author ? `${title} ${author}` : title
+      const [books, series] = await Promise.all([
+        searchHardcoverMulti(bookQuery, 'Book'),
+        searchHardcoverMulti(title, 'Series'),
+      ])
+      const seen = new Set<number>()
+      const combined: HardcoverSearchResult[] = []
+      for (const r of [...books, ...series]) {
+        if (!seen.has(r.bookId)) { seen.add(r.bookId); combined.push(r) }
+      }
+      return combined
     },
   })
 }

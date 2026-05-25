@@ -22,6 +22,7 @@ import {
   type HardcoverSearchResult,
 } from '@/hooks/useHardcoverBooks'
 import { StarRating } from '@/components/StarRating'
+import { HardcoverSearchModal } from '@/components/HardcoverSearchModal'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
@@ -298,12 +299,12 @@ export default function CategoryPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hardcoverLibrary, hardcoverLinks])
   // Two-step add: first search (shows match for confirmation), then add
-  const [searchingTitle, setSearchingTitle]   = useState<string | null>(null)
-  const [pendingAdd, setPendingAdd]           = useState<{ originalTitle: string; itemId: number } & HardcoverSearchResult | null>(null)
-  const [addingTitle, setAddingTitle]         = useState<string | null>(null)
+  const [addingTitle, setAddingTitle]           = useState<string | null>(null)
   const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null)
-  const [reSearchQuery, setReSearchQuery]     = useState<string>('')
-  const [showReSearch, setShowReSearch]       = useState(false)
+  // Modal state
+  const [modalContext, setModalContext] = useState<{ title: string; itemId: number; author: string } | null>(null)
+  const [modalResults, setModalResults] = useState<HardcoverSearchResult[]>([])
+  const [modalSearching, setModalSearching] = useState(false)
 
   const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
     if (!isBooks || !hardcoverLibrary) return []
@@ -322,108 +323,27 @@ export default function CategoryPage() {
           const itemId = row.original.id
           const book   = lookup(title, itemId)
           if (!book) {
-            // Step 2: awaiting confirmation
-            if (pendingAdd?.originalTitle === title) {
-              const doSearch = (query: string) => {
-                if (!query.trim()) return
-                setSearchingTitle(title)
-                setShowReSearch(false)
-                searchBook.mutate(
-                  { title: query },
-                  {
-                    onSuccess: (result) => setPendingAdd({ originalTitle: title, itemId, ...result }),
-                    onSettled: () => setSearchingTitle(null),
-                  },
-                )
-              }
-              return (
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs text-foreground leading-tight">
-                    "{pendingAdd.title}"
-                    {pendingAdd.authors ? ` · ${pendingAdd.authors}` : ''}
-                    {pendingAdd.resultType === 'Series' && (
-                      <span className="ml-1 text-amber-500">(Series — re-search for a specific book)</span>
-                    )}
-                  </span>
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <button
-                      disabled={addingTitle === title}
-                      onClick={() => {
-                        setAddingTitle(title)
-                        addBook.mutate(
-                          { bookId: pendingAdd.bookId, statusId: 1 },
-                          {
-                            onSuccess: () => {
-                              upsertLink.mutate({
-                                analysisItemId:  pendingAdd.itemId,
-                                hardcoverBookId: pendingAdd.bookId,
-                                bookTitle:       pendingAdd.title,
-                              })
-                            },
-                            onSettled: () => { setAddingTitle(null); setPendingAdd(null); setShowReSearch(false) },
-                          },
-                        )
-                      }}
-                      className="text-xs cursor-pointer text-green-600 hover:text-green-500 underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {addingTitle === title ? 'Adding…' : 'Confirm'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowReSearch((v) => !v)
-                        setReSearchQuery(title)
-                      }}
-                      className="text-xs cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      {searchingTitle === title ? 'Searching…' : 'Re-search'}
-                    </button>
-                    <button
-                      onClick={() => { setPendingAdd(null); setShowReSearch(false) }}
-                      className="text-xs cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                  {showReSearch && (
-                    <div className="flex items-center gap-1 mt-0.5">
-                      <input
-                        autoFocus
-                        value={reSearchQuery}
-                        onChange={(e) => setReSearchQuery(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && doSearch(reSearchQuery)}
-                        className="text-xs border border-border rounded px-1.5 py-0.5 bg-background text-foreground w-40 focus:outline-none focus:ring-1 focus:ring-ring"
-                        placeholder="Search title…"
-                      />
-                      <button
-                        onClick={() => doSearch(reSearchQuery)}
-                        className="text-xs cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        →
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )
-            }
-            // Step 1: search
-            const isSearching = searchingTitle === title
+            const isOpening = addingTitle === title
             const author = String(row.original.item_data.author ?? '')
             return (
               <button
-                disabled={isSearching}
+                disabled={isOpening}
                 onClick={() => {
-                  setSearchingTitle(title)
+                  setAddingTitle(title)
+                  setModalContext({ title, itemId, author })
+                  setModalResults([])
+                  setModalSearching(true)
                   searchBook.mutate(
                     { title, author },
                     {
-                      onSuccess: (result) => { setPendingAdd({ originalTitle: title, itemId, ...result }) },
-                      onSettled: () => setSearchingTitle(null),
+                      onSuccess: (results) => setModalResults(results),
+                      onSettled: () => { setModalSearching(false); setAddingTitle(null) },
                     },
                   )
                 }}
                 className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
-                {isSearching ? 'Searching…' : '+ Add to Hardcover'}
+                {isOpening ? 'Searching…' : '+ Add to Hardcover'}
               </button>
             )
           }
@@ -474,7 +394,7 @@ export default function CategoryPage() {
         enableSorting: true,
       },
     ]
-  }, [isBooks, hardcoverLibrary, hardcoverLinks, updateRating, updateStatus, searchBook, addBook, upsertLink, searchingTitle, pendingAdd, addingTitle, updatingStatusId, reSearchQuery, showReSearch])
+  }, [isBooks, hardcoverLibrary, hardcoverLinks, updateRating, updateStatus, searchBook, addBook, upsertLink, addingTitle, updatingStatusId])
 
   const columns = useMemo(
     () => [...buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick), ...hardcoverColumns],
@@ -490,6 +410,46 @@ export default function CategoryPage() {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Hardcover search modal */}
+      {modalContext && (
+        <HardcoverSearchModal
+          initialQuery={`${modalContext.title} ${modalContext.author}`.trim()}
+          results={modalResults}
+          isSearching={modalSearching}
+          onClose={() => setModalContext(null)}
+          onSearch={async (query) => {
+            setModalSearching(true)
+            return new Promise((resolve) => {
+              searchBook.mutate(
+                { title: query },
+                {
+                  onSuccess: (results) => { setModalResults(results); resolve(results) },
+                  onError:   ()        => resolve([]),
+                  onSettled: ()        => setModalSearching(false),
+                },
+              )
+            })
+          }}
+          onSelect={(result) => {
+            const { title, itemId } = modalContext
+            setAddingTitle(title)
+            addBook.mutate(
+              { bookId: result.bookId, statusId: 1 },
+              {
+                onSuccess: () => {
+                  upsertLink.mutate({
+                    analysisItemId:  itemId,
+                    hardcoverBookId: result.bookId,
+                    bookTitle:       result.title,
+                  })
+                },
+                onSettled: () => { setAddingTitle(null); setModalContext(null) },
+              },
+            )
+          }}
+        />
+      )}
+
       <div className="max-w-7xl mx-auto px-6 py-12">
 
         {/* Header */}
