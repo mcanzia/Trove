@@ -1,51 +1,65 @@
 # Trove
 
-A personal dashboard for exploring and discovering content from your saved Reddit and Instagram posts — organized by category, searchable, and sortable by when things were added or originally posted.
-
-Data is sourced from the [SavedPosts](../SavedPosts) analysis pipeline, which runs daily and stores results in Supabase.
-
----
-
-## What it does
-
-The SavedPosts pipeline classifies and analyzes your saved social media content into thematic categories (Recipes, Travel, Books, Anime, etc.) and extracts structured recommendations from them. Trove is the front-end that makes that data browsable and useful day-to-day.
-
-**Key features (planned):**
-- Browse all categories with item counts and last-analyzed dates
-- Filter and search within categories
-- Sort by date added or original post date
-- Mark items as Watched / Read on trackable categories (Anime, Books, Movies, TV)
-- View source links back to the original Reddit or Instagram post
-- Platform filter (Reddit / Instagram / both)
-
----
-
-## Data source
-
-Reads directly from Supabase. Tables used:
-
-| Table | Contents |
-|-------|----------|
-| `posts` | Raw Reddit and Instagram posts with metadata and transcriptions |
-| `categories` | Category definitions with display config (`trackable`, `group_by`) |
-| `post_categories` | Post ↔ category assignments |
-| `analysis_items` | Extracted recommendations/highlights per category |
-| `analysis_metadata` | Per-category analysis timestamps and post counts |
+A web UI for browsing and searching the analysed content from the [SavedPosts](../SavedPosts) pipeline — Reddit and Instagram saved posts, classified into categories and surfaced in one place.
 
 ---
 
 ## Tech stack
 
-TBD
+| Tool | Purpose |
+|------|---------|
+| React + TypeScript | UI framework |
+| Vite + `@tailwindcss/vite` | Build tooling + Tailwind v4 |
+| shadcn/ui | Component library |
+| TanStack Query | Data fetching & caching |
+| React Router | Client-side routing |
+| Supabase JS | Database client |
+
+---
+
+## Project structure
+
+```
+src/
+├── components/
+│   └── ui/           shadcn components (button, card, …)
+├── hooks/
+│   ├── useCategories.ts       Fetch all categories
+│   └── useAnalysisItems.ts    Fetch items for a category
+├── lib/
+│   ├── supabase.ts   Supabase client
+│   └── utils.ts      cn() helper (shadcn)
+├── pages/
+│   ├── HomePage.tsx       Category grid
+│   └── CategoryPage.tsx   Items table with platform filter
+├── types/
+│   └── index.ts      TypeScript types matching the DB schema
+├── App.tsx           Route definitions
+└── main.tsx          Providers (QueryClient, BrowserRouter)
+```
 
 ---
 
 ## Local setup
 
-TBD
+```bash
+npm install
+cp .env.local .env.local   # already exists — fill in values
+npm run dev
+```
+
+### Environment variables (`.env.local`)
+
+| Variable | Description |
+|----------|-------------|
+| `VITE_SUPABASE_URL` | Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Supabase anon/public key |
+
+Both values are available in the Supabase dashboard under **Project Settings → API**.
 
 ---
 
-## Related
+## Pages
 
-- [SavedPosts](../SavedPosts) — the data pipeline that feeds this app
+- **`/`** — grid of all categories, click through to browse items
+- **`/category/:name`** — table of analysis items for that category, filterable by platform (Reddit / Instagram)

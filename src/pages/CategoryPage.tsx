@@ -1,0 +1,386 @@
+import { useParams, Link } from 'react-router-dom'
+import { useState, useMemo, useRef, lazy, Suspense } from 'react'
+import { type ColumnDef } from '@tanstack/react-table'
+import { ChevronDown, MapPin, Table2, Map as MapIcon } from 'lucide-react'
+import { useAnalysisItems } from '@/hooks/useAnalysisItems'
+import { useCategories } from '@/hooks/useCategories'
+import { DataTable } from '@/components/DataTable'
+import { getLanguageFlag } from '@/lib/languageFlags'
+import { getCountryFlag } from '@/lib/countryFlags'
+import type { AnalysisItem, OutputField, Platform } from '@/types'
+import type { FlyTarget } from '@/components/TravelMap'
+
+const TravelMap = lazy(() => import('@/components/TravelMap'))
+
+// ── column builder ────────────────────────────────────────────────────────────
+
+function buildColumns(
+  fields: OutputField[],
+  hiddenKeys: string[] = [],
+  onLocationClick?: (lat: number, lng: number, itemId: number) => void,
+): ColumnDef<AnalysisItem, unknown>[] {
+  const dynamic: ColumnDef<AnalysisItem, unknown>[] = fields
+    .filter((f) => !hiddenKeys.includes(f.key))
+    .map((f) => ({
+      id: f.key,
+      header: f.label,
+      accessorFn: (row) => row.item_data[f.key] ?? '',
+      cell: ({ getValue }) => (
+        <span className="text-foreground">{String(getValue() ?? '')}</span>
+      ),
+    }))
+
+  return [
+    {
+      id: '_index',
+      header: '#',
+      cell: ({ row }) => (
+        <span className="text-muted-foreground tabular-nums">{row.index + 1}</span>
+      ),
+      enableSorting: false,
+      size: 48,
+    },
+    ...dynamic,
+    {
+      id: '_added',
+      header: 'Added',
+      accessorFn: (row) =>
+        row.item_data._first_added
+          ? String(row.item_data._first_added).slice(0, 10)
+          : row.created_at.slice(0, 10),
+      cell: ({ getValue }) => (
+        <span className="text-muted-foreground whitespace-nowrap tabular-nums">
+          {String(getValue())}
+        </span>
+      ),
+    },
+    {
+      id: '_posted',
+      header: 'Posted',
+      accessorFn: (row) =>
+        row.platform === 'instagram'
+          ? (row.posts?.timestamp?.slice(0, 10) ?? '')
+          : (row.posts?.year ?? ''),
+      cell: ({ getValue }) => (
+        <span className="text-muted-foreground whitespace-nowrap tabular-nums">
+          {String(getValue()) || '—'}
+        </span>
+      ),
+    },
+    {
+      id: '_platform',
+      header: 'Platform',
+      accessorFn: (row) => row.platform,
+      cell: ({ getValue }) => {
+        const p = getValue() as string
+        return (
+          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+            p === 'reddit'
+              ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+              : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400'
+          }`}>
+            {p}
+          </span>
+        )
+      },
+    },
+    ...(onLocationClick ? [{
+      id: '_location',
+      header: 'Location',
+      accessorFn: (row: AnalysisItem) => {
+        const locs = row.item_data._locations as { lat: number; lng: number }[] | undefined
+        if (!locs?.length) return ''
+        return `${locs[0].lat},${locs[0].lng}`
+      },
+      cell: ({ row, getValue }: { row: { original: AnalysisItem }, getValue: () => unknown }) => {
+        const coords = getValue() as string
+        if (!coords) return <span className="text-muted-foreground text-xs">—</span>
+        const [lat, lng] = coords.split(',')
+        return (
+          <button
+            onClick={() => onLocationClick(parseFloat(lat), parseFloat(lng), row.original.id)}
+            className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline whitespace-nowrap cursor-pointer"
+          >
+            <MapPin size={11} />
+            {parseFloat(lat).toFixed(4)}, {parseFloat(lng).toFixed(4)}
+          </button>
+        )
+      },
+      enableSorting: false,
+    } satisfies ColumnDef<AnalysisItem, unknown>] : []),
+    {
+      id: '_source',
+      header: 'Source',
+      accessorFn: (row) => row.posts?.url ?? '',
+      cell: ({ row, getValue }) => {
+        const url = getValue() as string
+        if (!url) return <span className="text-muted-foreground text-xs">—</span>
+        return (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary hover:underline text-xs whitespace-nowrap"
+          >
+            {row.original.platform === 'reddit' ? 'Reddit →' : 'Instagram →'}
+          </a>
+        )
+      },
+      enableSorting: false,
+    },
+  ]
+}
+
+// ── sub-components ────────────────────────────────────────────────────────────
+
+interface CityTableProps {
+  city: string
+  items: AnalysisItem[]
+  columns: ColumnDef<AnalysisItem, unknown>[]
+  search: string
+}
+
+function CityTable({ city, items, columns, search }: CityTableProps) {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center gap-2">
+        <MapPin size={15} className="text-muted-foreground shrink-0" />
+        <h2 className="text-base font-semibold text-foreground">{city}</h2>
+        <span className="text-xs text-muted-foreground">
+          {items.length} tip{items.length !== 1 ? 's' : ''}
+        </span>
+      </div>
+      <DataTable columns={columns} data={items} globalFilter={search} />
+    </section>
+  )
+}
+
+// ── page ─────────────────────────────────────────────────────────────────────
+
+export default function CategoryPage() {
+  const { name } = useParams<{ name: string }>()
+  const categoryName = decodeURIComponent(name ?? '')
+  const [platform, setPlatform] = useState<Platform | undefined>(undefined)
+  const [search, setSearch] = useState('')
+  const [selectedGroup, setSelectedGroup] = useState<string>('')
+  const [viewMode, setViewMode] = useState<'table' | 'map'>('table')
+  const [flyTarget, setFlyTarget] = useState<FlyTarget | null>(null)
+  const flyKeyRef = useRef(0)
+
+  const { data: categories } = useCategories()
+  const category = categories?.find((c) => c.name === categoryName)
+  const { data: items, isLoading, error } = useAnalysisItems({ categoryName, platform })
+
+  const groupBy = category?.group_by
+
+  // ── single-level grouping (e.g. "language") ──
+  const singleGroupField = typeof groupBy === 'string' ? groupBy : null
+
+  // ── two-level grouping (e.g. ["country", "city"]) ──
+  const isHierarchical = Array.isArray(groupBy) && groupBy.length === 2
+  const [hierarchyKey1, hierarchyKey2] = isHierarchical
+    ? (groupBy as [string, string])
+    : [null, null]
+
+  // Sorted unique values for level-1 dropdown
+  const level1Options = useMemo(() => {
+    if (!items) return []
+    const field = singleGroupField ?? hierarchyKey1
+    if (!field) return []
+    const values = new Set<string>()
+    for (const item of items) {
+      const v = String(item.item_data[field] ?? '').trim()
+      if (v) values.add(v)
+    }
+    return Array.from(values).sort((a, b) => a.localeCompare(b))
+  }, [items, singleGroupField, hierarchyKey1])
+
+  const activeGroup = selectedGroup || level1Options[0] || ''
+
+  // ── items filtered to selected level-1 value ──
+  const level1Items = useMemo(() => {
+    if (!items) return []
+    const field = singleGroupField ?? hierarchyKey1
+    if (!field || !activeGroup) return items
+    return items.filter(
+      (item) => String(item.item_data[field] ?? '').trim() === activeGroup,
+    )
+  }, [items, singleGroupField, hierarchyKey1, activeGroup])
+
+  // ── for hierarchical: group level-1 items by level-2 (city) ──
+  const cityGroups = useMemo(() => {
+    if (!isHierarchical || !hierarchyKey2) return null
+    const map = new Map<string, AnalysisItem[]>()
+    for (const item of level1Items) {
+      const city = String(item.item_data[hierarchyKey2] ?? 'Unknown').trim()
+      if (!map.has(city)) map.set(city, [])
+      map.get(city)!.push(item)
+    }
+    return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
+  }, [isHierarchical, hierarchyKey2, level1Items])
+
+  // ── columns: hide group-by keys (shown in header/dropdown instead) ──
+  const hiddenKeys = useMemo(() => {
+    if (singleGroupField) return [singleGroupField]
+    if (isHierarchical && hierarchyKey1 && hierarchyKey2) return [hierarchyKey1, hierarchyKey2]
+    return []
+  }, [singleGroupField, isHierarchical, hierarchyKey1, hierarchyKey2])
+
+  const handleLocationClick = useMemo(() => {
+    if (!isHierarchical) return undefined
+    return (lat: number, lng: number, itemId?: number) => {
+      flyKeyRef.current += 1
+      setFlyTarget({ lat, lng, key: flyKeyRef.current, itemId })
+      setViewMode('map')
+    }
+  }, [isHierarchical])
+
+  const columns = useMemo(
+    () => buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick),
+    [category?.output_fields, hiddenKeys, handleLocationClick],
+  )
+
+  // Flag lookup for the dropdown
+  const getOptionLabel = (value: string) => {
+    if (singleGroupField === 'language') return `${getLanguageFlag(value)}  ${value}`
+    if (hierarchyKey1 === 'country') return `${getCountryFlag(value)}  ${value}`
+    return value
+  }
+
+  return (
+    <div className="min-h-screen bg-background">
+      <div className="max-w-7xl mx-auto px-6 py-12">
+
+        {/* Header */}
+        <div className="mb-8">
+          <Link to="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
+            ← All categories
+          </Link>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
+            {categoryName}
+          </h1>
+          {category?.extraction_goal && (
+            <p className="mt-1 text-muted-foreground">{category.extraction_goal}</p>
+          )}
+        </div>
+
+        {/* Controls */}
+        <div className="flex flex-wrap items-center gap-3 mb-6">
+          {/* Platform filter */}
+          <div className="flex gap-2">
+            {(['all', 'reddit', 'instagram'] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPlatform(p === 'all' ? undefined : p)}
+                className={`px-3 py-1 rounded-full text-sm border transition-colors ${
+                  (p === 'all' && !platform) || platform === p
+                    ? 'bg-primary text-primary-foreground border-primary'
+                    : 'bg-background text-muted-foreground border-border hover:border-primary/50'
+                }`}
+              >
+                {p.charAt(0).toUpperCase() + p.slice(1)}
+              </button>
+            ))}
+          </div>
+
+          {/* Group-by dropdown */}
+          {level1Options.length > 0 && (
+            <div className="relative">
+              <select
+                value={activeGroup}
+                onChange={(e) => { setSelectedGroup(e.target.value); setFlyTarget(null) }}
+                className="appearance-none pl-3 pr-8 py-1.5 text-sm rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
+              >
+                {level1Options.map((opt) => (
+                  <option key={opt} value={opt}>{getOptionLabel(opt)}</option>
+                ))}
+              </select>
+              <ChevronDown
+                size={14}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+              />
+            </div>
+          )}
+
+          {/* Search */}
+          <input
+            type="search"
+            placeholder="Search…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="ml-auto px-3 py-1.5 text-sm rounded-md border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-56"
+          />
+
+          {/* Map / Table toggle — only for hierarchical group_by categories */}
+          {isHierarchical && (
+            <div className="flex rounded-md border border-border overflow-hidden">
+              <button
+                onClick={() => setViewMode('table')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
+                  viewMode === 'table'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-background text-muted-foreground hover:bg-muted'
+                }`}
+              >
+                <Table2 size={14} /> Table
+              </button>
+              <button
+                onClick={() => setViewMode('map')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
+                  viewMode === 'map'
+                    ? 'bg-primary text-primary-foreground'
+                    : 'bg-background text-muted-foreground hover:bg-muted'
+                }`}
+              >
+                <MapIcon size={14} /> Map
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* States */}
+        {isLoading && <div className="text-muted-foreground">Loading…</div>}
+        {error && <div className="text-destructive">Failed to load items.</div>}
+
+        {/* Hierarchical: map — always mounted so flyTo works instantly from
+            the table. Hidden with CSS when in table view. */}
+        {cityGroups && (
+          <div className={viewMode === 'map' ? '' : 'hidden'}>
+            <Suspense fallback={<div className="text-muted-foreground">Loading map…</div>}>
+              <TravelMap
+              items={level1Items}
+              flyTarget={flyTarget}
+              visible={viewMode === 'map'}
+              country={isHierarchical && hierarchyKey1 === 'country' ? activeGroup : undefined}
+            />
+            </Suspense>
+          </div>
+        )}
+
+        {/* Hierarchical: table view — one table per city */}
+        {cityGroups && viewMode === 'table' && (
+          <div className="space-y-10">
+            {cityGroups.map(([city, cityItems]) => (
+              <CityTable
+                key={city}
+                city={city}
+                items={cityItems}
+                columns={columns}
+                search={search}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* Flat view: single table (language, or no grouping) */}
+        {!cityGroups && items && (
+          <DataTable
+            columns={columns}
+            data={singleGroupField ? level1Items : items}
+            globalFilter={search}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
