@@ -1,5 +1,5 @@
-import { useParams, Link } from 'react-router-dom'
-import { useState, useMemo, useRef, lazy, Suspense } from 'react'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { useState, useMemo, useRef, useCallback, lazy, Suspense } from 'react'
 import { type ColumnDef } from '@tanstack/react-table'
 import { ChevronDown, MapPin, Table2, Map as MapIcon } from 'lucide-react'
 import { useAnalysisItems } from '@/hooks/useAnalysisItems'
@@ -160,12 +160,35 @@ function CityTable({ city, items, columns, search }: CityTableProps) {
 export default function CategoryPage() {
   const { name } = useParams<{ name: string }>()
   const categoryName = decodeURIComponent(name ?? '')
-  const [platform, setPlatform] = useState<Platform | undefined>(undefined)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState('')
-  const [selectedGroup, setSelectedGroup] = useState<string>('')
-  const [viewMode, setViewMode] = useState<'table' | 'map'>('table')
   const [flyTarget, setFlyTarget] = useState<FlyTarget | null>(null)
   const flyKeyRef = useRef(0)
+
+  // Derive controlled state from URL search params so the page is
+  // fully shareable/bookmarkable and survives a browser refresh.
+  const platformParam = searchParams.get('platform')
+  const platform = (platformParam === 'reddit' || platformParam === 'instagram')
+    ? platformParam as Platform
+    : undefined
+  const viewMode   = (searchParams.get('view') === 'map') ? 'map' as const : 'table' as const
+  const selectedGroup = searchParams.get('group') ?? ''
+
+  /** Update a single search param, preserving the rest. */
+  const setParam = useCallback(
+    (key: string, value: string | null) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          if (value != null) next.set(key, value)
+          else next.delete(key)
+          return next
+        },
+        { replace: false },
+      )
+    },
+    [setSearchParams],
+  )
 
   const { data: categories } = useCategories()
   const category = categories?.find((c) => c.name === categoryName)
@@ -231,9 +254,10 @@ export default function CategoryPage() {
     return (lat: number, lng: number, itemId?: number) => {
       flyKeyRef.current += 1
       setFlyTarget({ lat, lng, key: flyKeyRef.current, itemId })
-      setViewMode('map')
+      setParam('view', 'map')
     }
-  }, [isHierarchical])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isHierarchical, setParam])
 
   const columns = useMemo(
     () => buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick),
@@ -271,7 +295,7 @@ export default function CategoryPage() {
             {(['all', 'reddit', 'instagram'] as const).map((p) => (
               <button
                 key={p}
-                onClick={() => setPlatform(p === 'all' ? undefined : p)}
+                onClick={() => setParam('platform', p === 'all' ? null : p)}
                 className={`px-3 py-1 rounded-full text-sm border transition-colors ${
                   (p === 'all' && !platform) || platform === p
                     ? 'bg-primary text-primary-foreground border-primary'
@@ -288,7 +312,7 @@ export default function CategoryPage() {
             <div className="relative">
               <select
                 value={activeGroup}
-                onChange={(e) => { setSelectedGroup(e.target.value); setFlyTarget(null) }}
+                onChange={(e) => { setParam('group', e.target.value); setFlyTarget(null) }}
                 className="appearance-none pl-3 pr-8 py-1.5 text-sm rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
               >
                 {level1Options.map((opt) => (
@@ -315,7 +339,7 @@ export default function CategoryPage() {
           {isHierarchical && (
             <div className="flex rounded-md border border-border overflow-hidden">
               <button
-                onClick={() => setViewMode('table')}
+                onClick={() => setParam('view', 'table')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
                   viewMode === 'table'
                     ? 'bg-primary text-primary-foreground'
@@ -325,7 +349,7 @@ export default function CategoryPage() {
                 <Table2 size={14} /> Table
               </button>
               <button
-                onClick={() => setViewMode('map')}
+                onClick={() => setParam('view', 'map')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
                   viewMode === 'map'
                     ? 'bg-primary text-primary-foreground'

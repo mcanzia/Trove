@@ -5,7 +5,7 @@ import MapGL, {
   Layer,
   Popup,
   type MapRef,
-  type MapLayerMouseEvent,
+  type MapMouseEvent as MapLayerMouseEvent,
   type LayerProps,
 } from 'react-map-gl/mapbox'
 import type { FeatureCollection, Feature, Point } from 'geojson'
@@ -312,11 +312,11 @@ export default function TravelMap({ items, flyTarget, visible = true, country }:
     if (!map) return
     const features = e.features ?? []
     const overInteractive =
-      features.some((f) => f.layer?.id === 'unclustered-point' || f.layer?.id === 'clusters')
+      features.some((f: { layer?: { id?: string } }) => f.layer?.id === 'unclustered-point' || f.layer?.id === 'clusters')
 
     setCursor(overInteractive ? 'pointer' : 'auto')
 
-    const pointFeat = features.find((f) => f.layer?.id === 'unclustered-point')
+    const pointFeat = features.find((f: { layer?: { id?: string } }) => f.layer?.id === 'unclustered-point')
     const newId = pointFeat?.id != null ? (pointFeat.id as number) : null
 
     if (hoveredIdRef.current !== null && hoveredIdRef.current !== newId) {
