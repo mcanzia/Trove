@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom'
 import { useCategories } from '@/hooks/useCategories'
 import { getCategoryTheme } from '@/lib/categoryConfig'
+import { toSlug } from '@/lib/utils'
 
 export default function HomePage() {
   const { data: categories, isLoading, error } = useCategories()
@@ -27,7 +28,7 @@ export default function HomePage() {
               const theme = getCategoryTheme(cat.name)
               const Icon = theme.icon
               return (
-                <Link key={cat.id} to={`/category/${encodeURIComponent(cat.name)}`}>
+                <Link key={cat.id} to={`/category/${toSlug(cat.name)}`}>
                   <div className={`
                     group h-full flex flex-col gap-3 p-5 rounded-xl border border-border border-t-2
                     bg-card transition-all duration-150 cursor-pointer shadow-sm

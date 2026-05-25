@@ -6,7 +6,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
-      <Route path="/category/:name" element={<CategoryPage />} />
+      <Route path="/category/:slug" element={<CategoryPage />} />
     </Routes>
   )
 }

@@ -1,5 +1,6 @@
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { useState, useMemo, useRef, useCallback, lazy, Suspense } from 'react'
+import { toSlug } from '@/lib/utils'
 import { type ColumnDef } from '@tanstack/react-table'
 import { ChevronDown, MapPin, Table2, Map as MapIcon } from 'lucide-react'
 import { useAnalysisItems } from '@/hooks/useAnalysisItems'
@@ -158,8 +159,11 @@ function CityTable({ city, items, columns, search }: CityTableProps) {
 // ── page ─────────────────────────────────────────────────────────────────────
 
 export default function CategoryPage() {
-  const { name } = useParams<{ name: string }>()
-  const categoryName = decodeURIComponent(name ?? '')
+  const { slug } = useParams<{ slug: string }>()
+  // Match the slug back to the real category name via the same toSlug transform
+  const { data: categories } = useCategories()
+  const category = categories?.find((c) => toSlug(c.name) === slug)
+  const categoryName = category?.name ?? slug ?? ''
   const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState('')
   const [flyTarget, setFlyTarget] = useState<FlyTarget | null>(null)
@@ -190,8 +194,6 @@ export default function CategoryPage() {
     [setSearchParams],
   )
 
-  const { data: categories } = useCategories()
-  const category = categories?.find((c) => c.name === categoryName)
   const { data: items, isLoading, error } = useAnalysisItems({ categoryName, platform })
 
   const groupBy = category?.group_by
