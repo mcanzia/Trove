@@ -14,7 +14,7 @@ import {
   useUpdateHardcoverStatus,
   useSearchHardcoverBook,
   useAddBookByTitle,
-  normaliseTitle,
+  findHardcoverBook,
   HARDCOVER_STATUS,
   type HardcoverSearchResult,
 } from '@/hooks/useHardcoverBooks'
@@ -292,13 +292,11 @@ export default function CategoryPage() {
         id: '_hc_status',
         header: 'Status',
         accessorFn: (row) => {
-          const key = normaliseTitle(String(row.item_data.book_title ?? ''))
-          return hardcoverBooks.get(key)?.statusId ?? null
+          return findHardcoverBook(hardcoverBooks, String(row.item_data.book_title ?? ''))?.statusId ?? null
         },
         cell: ({ row }) => {
           const title = String(row.original.item_data.book_title ?? '')
-          const key = normaliseTitle(title)
-          const book = hardcoverBooks.get(key)
+          const book = findHardcoverBook(hardcoverBooks, title)
           if (!book) {
             // Step 2: awaiting confirmation
             if (pendingAdd?.originalTitle === title) {
@@ -374,12 +372,10 @@ export default function CategoryPage() {
         id: '_hc_rating',
         header: 'My Rating',
         accessorFn: (row) => {
-          const key = normaliseTitle(String(row.item_data.book_title ?? ''))
-          return hardcoverBooks.get(key)?.rating ?? null
+          return findHardcoverBook(hardcoverBooks, String(row.item_data.book_title ?? ''))?.rating ?? null
         },
         cell: ({ row }) => {
-          const key = normaliseTitle(String(row.original.item_data.book_title ?? ''))
-          const book = hardcoverBooks.get(key)
+          const book = findHardcoverBook(hardcoverBooks, String(row.original.item_data.book_title ?? ''))
           if (!book) return <span className="text-muted-foreground text-xs">—</span>
           return (
             <StarRating

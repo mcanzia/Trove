@@ -110,6 +110,25 @@ export function normaliseTitle(title: string): string {
     .replace(/[^a-z0-9]/g, '')         // strip punctuation/spaces
 }
 
+/**
+ * Look up a book in the Hardcover map by normalised title.
+ * Falls back to a substring match so e.g. "Stormlight Archive"
+ * matches "The Stormlight Archive Series 6 Books Collection Set…"
+ */
+export function findHardcoverBook(
+  books: Map<string, HardcoverBook>,
+  title: string,
+): HardcoverBook | undefined {
+  const key = normaliseTitle(title)
+  // 1. Exact normalised match
+  if (books.has(key)) return books.get(key)
+  // 2. Substring match — one key contains the other
+  for (const [hcKey, book] of books) {
+    if (hcKey.includes(key) || key.includes(hcKey)) return book
+  }
+  return undefined
+}
+
 // ── Hooks ─────────────────────────────────────────────────────────────────────
 
 interface GqlResponse {
