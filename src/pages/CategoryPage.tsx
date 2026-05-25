@@ -288,6 +288,8 @@ export default function CategoryPage() {
   const [pendingAdd, setPendingAdd]           = useState<{ originalTitle: string; itemId: number } & HardcoverSearchResult | null>(null)
   const [addingTitle, setAddingTitle]         = useState<string | null>(null)
   const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null)
+  const [reSearchQuery, setReSearchQuery]     = useState<string>('')
+  const [showReSearch, setShowReSearch]       = useState(false)
 
   const hardcoverColumns = useMemo((): ColumnDef<AnalysisItem, unknown>[] => {
     if (!isBooks || !hardcoverLibrary) return []
@@ -308,13 +310,25 @@ export default function CategoryPage() {
           if (!book) {
             // Step 2: awaiting confirmation
             if (pendingAdd?.originalTitle === title) {
+              const doSearch = (query: string) => {
+                if (!query.trim()) return
+                setSearchingTitle(title)
+                setShowReSearch(false)
+                searchBook.mutate(
+                  { title: query },
+                  {
+                    onSuccess: (result) => setPendingAdd({ originalTitle: title, itemId, ...result }),
+                    onSettled: () => setSearchingTitle(null),
+                  },
+                )
+              }
               return (
                 <div className="flex flex-col gap-1">
                   <span className="text-xs text-foreground leading-tight">
                     "{pendingAdd.title}"
                     {pendingAdd.authors ? ` · ${pendingAdd.authors}` : ''}
                   </span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <button
                       disabled={addingTitle === title}
                       onClick={() => {
@@ -323,10 +337,9 @@ export default function CategoryPage() {
                           { bookId: pendingAdd.bookId, statusId: 1 },
                           {
                             onSuccess: () => {
-                              // Store the ID link so future lookups are exact
                               upsertLink.mutate({ analysisItemId: pendingAdd.itemId, hardcoverBookId: pendingAdd.bookId })
                             },
-                            onSettled: () => { setAddingTitle(null); setPendingAdd(null) },
+                            onSettled: () => { setAddingTitle(null); setPendingAdd(null); setShowReSearch(false) },
                           },
                         )
                       }}
@@ -335,12 +348,39 @@ export default function CategoryPage() {
                       {addingTitle === title ? 'Adding…' : 'Confirm'}
                     </button>
                     <button
-                      onClick={() => setPendingAdd(null)}
+                      onClick={() => {
+                        setShowReSearch((v) => !v)
+                        setReSearchQuery(title)
+                      }}
+                      className="text-xs cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      {searchingTitle === title ? 'Searching…' : 'Re-search'}
+                    </button>
+                    <button
+                      onClick={() => { setPendingAdd(null); setShowReSearch(false) }}
                       className="text-xs cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
                     >
                       Cancel
                     </button>
                   </div>
+                  {showReSearch && (
+                    <div className="flex items-center gap-1 mt-0.5">
+                      <input
+                        autoFocus
+                        value={reSearchQuery}
+                        onChange={(e) => setReSearchQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && doSearch(reSearchQuery)}
+                        className="text-xs border border-border rounded px-1.5 py-0.5 bg-background text-foreground w-40 focus:outline-none focus:ring-1 focus:ring-ring"
+                        placeholder="Search title…"
+                      />
+                      <button
+                        onClick={() => doSearch(reSearchQuery)}
+                        className="text-xs cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        →
+                      </button>
+                    </div>
+                  )}
                 </div>
               )
             }
@@ -413,7 +453,7 @@ export default function CategoryPage() {
         enableSorting: true,
       },
     ]
-  }, [isBooks, hardcoverLibrary, hardcoverLinks, updateRating, updateStatus, searchBook, addBook, upsertLink, searchingTitle, pendingAdd, addingTitle, updatingStatusId])
+  }, [isBooks, hardcoverLibrary, hardcoverLinks, updateRating, updateStatus, searchBook, addBook, upsertLink, searchingTitle, pendingAdd, addingTitle, updatingStatusId, reSearchQuery, showReSearch])
 
   const columns = useMemo(
     () => [...buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick), ...hardcoverColumns],
