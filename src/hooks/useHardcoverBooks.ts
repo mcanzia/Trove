@@ -317,10 +317,18 @@ export function useHardcoverLinks() {
 export function useUpsertHardcoverLink() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: async ({ analysisItemId, hardcoverBookId }: { analysisItemId: number; hardcoverBookId: number }) => {
+    mutationFn: async ({
+      analysisItemId,
+      hardcoverBookId,
+      bookTitle,
+    }: {
+      analysisItemId:  number
+      hardcoverBookId: number
+      bookTitle?:      string
+    }) => {
       const { error } = await supabase
         .from('hardcover_links')
-        .upsert({ analysis_item_id: analysisItemId, hardcover_book_id: hardcoverBookId })
+        .upsert({ analysis_item_id: analysisItemId, hardcover_book_id: hardcoverBookId, book_title: bookTitle ?? null })
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-links'] }),

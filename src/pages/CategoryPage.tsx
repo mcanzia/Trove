@@ -340,7 +340,11 @@ export default function CategoryPage() {
                           { bookId: pendingAdd.bookId, statusId: 1 },
                           {
                             onSuccess: () => {
-                              upsertLink.mutate({ analysisItemId: pendingAdd.itemId, hardcoverBookId: pendingAdd.bookId })
+                              upsertLink.mutate({
+                                analysisItemId:  pendingAdd.itemId,
+                                hardcoverBookId: pendingAdd.bookId,
+                                bookTitle:       pendingAdd.title,
+                              })
                             },
                             onSettled: () => { setAddingTitle(null); setPendingAdd(null); setShowReSearch(false) },
                           },
