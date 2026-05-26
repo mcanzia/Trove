@@ -61,7 +61,10 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
                 {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
+                  <TableHead
+                    key={header.id}
+                    style={header.column.columnDef.size ? { width: header.column.columnDef.size, minWidth: header.column.columnDef.size } : undefined}
+                  >
                     {header.isPlaceholder ? null : (
                       <button
                         className={
@@ -89,7 +92,10 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
+                    <TableCell
+                      key={cell.id}
+                      style={cell.column.columnDef.size ? { width: cell.column.columnDef.size, minWidth: cell.column.columnDef.size } : undefined}
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </TableCell>
                   ))}

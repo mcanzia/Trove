@@ -2,6 +2,8 @@ import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { useState, useMemo, useRef, useCallback, useEffect, lazy, Suspense } from 'react'
 import { toSlug } from '@/lib/utils'
 import { type ColumnDef } from '@tanstack/react-table'
+import { useQueryClient } from '@tanstack/react-query'
+import { supabase } from '@/lib/supabase'
 
 import { ChevronDown, MapPin, Table2, Map as MapIcon } from 'lucide-react'
 import { useAnalysisItems } from '@/hooks/useAnalysisItems'
@@ -23,6 +25,30 @@ import {
 } from '@/hooks/useHardcoverBooks'
 import { HardcoverSearchModal } from '@/components/HardcoverSearchModal'
 import { BookCard } from '@/components/BookCard'
+import { MALSearchModal } from '@/components/MALSearchModal'
+import { IGDBSearchModal } from '@/components/IGDBSearchModal'
+import {
+  useIGDBLinks,
+  useUpsertIGDBLink,
+  useDeleteIGDBLink,
+  useUpdateIGDBScore,
+  useSearchIGDB,
+  type IGDBGame,
+} from '@/hooks/useIGDB'
+import {
+  useMALAuth,
+  useMALAnimeList,
+  useMALLinks,
+  useUpsertMALLink,
+  useDeleteMALLink,
+  useUpdateMALStatus,
+  useUpdateMALScore,
+  useAddMALAnime,
+  useSearchMAL,
+  normaliseAnimeTitle,
+  MAL_STATUS,
+  type MALSearchResult,
+} from '@/hooks/useMAL'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
@@ -276,8 +302,12 @@ export default function CategoryPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHierarchical, setParam])
 
-  // ── Hardcover integration (Books Worth Reading only) ──────────────────────
-  const isBooks = categoryName === 'Books Worth Reading'
+  const qc      = useQueryClient()
+  const isBooks       = categoryName === 'Books Worth Reading'
+  const isMtg         = categoryName === 'Magic: The Gathering'
+  const isBoardGames  = categoryName === 'Board Games'
+  const isAnime       = categoryName === 'Anime & Manga'
+  const isVideoGames  = categoryName === 'Video Game Recommendations'
   const { data: hardcoverLibrary }  = useHardcoverBooks()
   const { data: hardcoverLinks }    = useHardcoverLinks()
   const updateRating    = useUpdateHardcoverRating()
@@ -298,6 +328,184 @@ export default function CategoryPage() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hardcoverLibrary, hardcoverLinks])
+  // ── MAL integration (Anime & Manga only) ────────────────────────────────────
+  const malAuth               = useMALAuth()
+  const { data: malLibrary }  = useMALAnimeList()
+  const { data: malLinks }    = useMALLinks()
+  const updateMALStatus       = useUpdateMALStatus()
+  const updateMALScore        = useUpdateMALScore()
+  const addMALAnime           = useAddMALAnime()
+  const searchMAL             = useSearchMAL()
+  const upsertMALLink         = useUpsertMALLink()
+  const deleteMALLink         = useDeleteMALLink()
+
+  // Clean up stale mal_links whose anime no longer exists in library
+  useEffect(() => {
+    if (!malLibrary || !malLinks) return
+    for (const [itemId, animeId] of malLinks) {
+      if (!malLibrary.byId.has(animeId)) deleteMALLink.mutate(itemId)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [malLibrary, malLinks])
+
+  // Auto-sync: title-match unlinked Trove entries against existing MAL library.
+  const [malSyncing, setMalSyncing] = useState(false)
+
+  const clearAllMALLinks = useCallback(async () => {
+    if (!malLinks || malLinks.size === 0) return
+    // Optimistically clear UI immediately
+    qc.setQueryData(['mal-links'], new Map())
+    // Single delete request for all IDs
+    const ids = Array.from(malLinks.keys())
+    await supabase.from('mal_links').delete().in('analysis_item_id', ids)
+    qc.invalidateQueries({ queryKey: ['mal-links'] })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [malLinks, qc])
+
+  const runMALSync = useCallback(() => {
+    if (!items || !malLibrary || !malLinks) return
+    setMalSyncing(true)
+    const pending: Promise<unknown>[] = []
+    for (const item of items) {
+      const title = String(item.item_data.series_title ?? '')
+      if (!title || malLinks.has(item.id)) continue
+      // Auto-sync uses exact normalised title only — no substring fallback to avoid false positives.
+      const entry = malLibrary.byTitle.get(normaliseAnimeTitle(title))
+      if (entry) {
+        pending.push(
+          new Promise<void>((resolve) =>
+            upsertMALLink.mutate(
+              { analysisItemId: item.id, malAnimeId: entry.malId, seriesTitle: entry.title },
+              { onSettled: () => resolve() },
+            )
+          )
+        )
+      }
+    }
+    Promise.all(pending).finally(() => setMalSyncing(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, malLibrary, malLinks])
+
+  // Auto-sync on page load removed — user triggers sync manually via the Sync button.
+
+  const [malAddingItemId, setMalAddingItemId]     = useState<number | null>(null)
+  const [malUpdatingId,   setMalUpdatingId]       = useState<number | null>(null)
+  const [malModalContext, setMalModalContext]      = useState<{ title: string; itemId: number } | null>(null)
+  const [malModalResults, setMalModalResults]     = useState<MALSearchResult[]>([])
+  const [malModalSearching, setMalModalSearching] = useState(false)
+
+  // Inline confirmation state for destructive banner actions
+  const [malConfirming, setMalConfirming] = useState<'sync' | 'clear' | 'disconnect' | null>(null)
+
+  // ── IGDB integration (Video Games only) ─────────────────────────────────────
+  const { data: igdbLinks }   = useIGDBLinks()
+  const upsertIGDBLink        = useUpsertIGDBLink()
+  const deleteIGDBLink        = useDeleteIGDBLink()
+  const updateIGDBScore       = useUpdateIGDBScore()
+  const searchIGDB            = useSearchIGDB()
+
+  const [igdbModalContext,   setIgdbModalContext]   = useState<{ title: string; itemId: number } | null>(null)
+  const [igdbModalResults,   setIgdbModalResults]   = useState<IGDBGame[]>([])
+  const [igdbModalSearching, setIgdbModalSearching] = useState(false)
+  const [igdbSyncing,        setIgdbSyncing]        = useState(false)
+  const [igdbConfirming,     setIgdbConfirming]     = useState<'sync' | 'clear' | null>(null)
+
+  const openIGDBModal = (title: string, itemId: number) => {
+    setIgdbModalContext({ title, itemId })
+    setIgdbModalResults([])
+    setIgdbModalSearching(true)
+    searchIGDB.mutate(
+      { query: title },
+      {
+        onSuccess: (results) => setIgdbModalResults(results),
+        onSettled: () => setIgdbModalSearching(false),
+      },
+    )
+  }
+
+  const clearAllIGDBLinks = useCallback(async () => {
+    if (!igdbLinks || igdbLinks.size === 0) return
+    // Optimistically clear UI immediately
+    qc.setQueryData(['igdb-links'], new Map())
+    // Single delete request for all IDs
+    const ids = Array.from(igdbLinks.keys())
+    await supabase.from('igdb_links').delete().in('analysis_item_id', ids)
+    qc.invalidateQueries({ queryKey: ['igdb-links'] })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [igdbLinks, qc])
+
+  const runIGDBSync = useCallback(async () => {
+    if (!items || !igdbLinks) return
+    setIgdbSyncing(true)
+    try {
+      // Collect unlinked items and their titles
+      const unlinked = items
+        .filter((item) => !igdbLinks.has(item.id))
+        .map((item) => ({
+          itemId: item.id,
+          title:  String(item.item_data.game_title ?? item.item_data.title ?? '').trim(),
+        }))
+        .filter((x) => x.title)
+
+      if (unlinked.length === 0) { setIgdbSyncing(false); return }
+
+      // Single multiquery request — no rate-limit risk
+      const { data, error } = await supabase.functions.invoke('igdb-proxy', {
+        body: { action: 'batch-sync', titles: unlinked.map((x) => x.title) },
+      })
+      if (error) throw error
+      if (data?.error) throw new Error(String(data.error))
+
+      type BatchResult = { title: string; igdbId: number; igdbTitle: string; coverUrl: string | null; rating: number | null; genres: string[]; platforms: string[]; releaseYear: number | null }
+      const matched = data as BatchResult[]
+
+      if (matched.length === 0) { setIgdbSyncing(false); return }
+
+      // Build a title → match lookup
+      const byTitle = new Map(matched.map((m) => [m.title, m]))
+
+      // Single bulk upsert — one Supabase request for all matched games
+      const rows = unlinked
+        .filter((x) => byTitle.has(x.title))
+        .map(({ itemId, title }) => {
+          const m = byTitle.get(title)! as BatchResult
+          return {
+            analysis_item_id: itemId,
+            igdb_game_id:     m.igdbId,
+            game_title:       m.igdbTitle,
+            cover_url:        m.coverUrl    ?? null,
+            igdb_rating:      m.rating      ?? null,
+            genres:           m.genres      ?? [],
+            platforms:        m.platforms   ?? [],
+            release_year:     m.releaseYear ?? null,
+          }
+        })
+      if (rows.length > 0) await supabase.from('igdb_links').upsert(rows)
+
+      // Apply all new links to the cache in one shot — no per-row flashing
+      const current = qc.getQueryData<Map<number, { igdbGameId: number; personalScore: number | null }>>(['igdb-links']) ?? new Map()
+      const next    = new Map(current)
+      for (const { itemId, title } of unlinked) {
+        const m = byTitle.get(title) as { igdbId: number; igdbTitle: string; coverUrl: string | null; rating: number | null; genres: string[]; platforms: string[]; releaseYear: number | null } | undefined
+        if (m) next.set(itemId, {
+          igdbGameId:    m.igdbId,
+          igdbTitle:     m.igdbTitle,
+          personalScore: null,
+          coverUrl:      m.coverUrl    ?? null,
+          igdbRating:    m.rating      ?? null,
+          genres:        m.genres      ?? [],
+          platforms:     m.platforms   ?? [],
+          releaseYear:   m.releaseYear ?? null,
+        })
+      }
+      qc.setQueryData(['igdb-links'], next)
+    } catch (e) {
+      console.error('IGDB sync error:', e)
+    }
+    setIgdbSyncing(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, igdbLinks, qc])
+
   // Two-step add: first search (shows match for confirmation), then add
   const [addingTitle, setAddingTitle]           = useState<string | null>(null)
   const [updatingStatusId, setUpdatingStatusId] = useState<number | null>(null)
@@ -310,10 +518,304 @@ export default function CategoryPage() {
   const [modalResults, setModalResults] = useState<HardcoverSearchResult[]>([])
   const [modalSearching, setModalSearching] = useState(false)
 
-  const columns = useMemo(
-    () => buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick),
-    [category?.output_fields, hiddenKeys, handleLocationClick],
-  )
+  const columns = useMemo(() => {
+    const base = buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick)
+
+    if (isBoardGames) {
+      base.push({
+        id: '_bgg',
+        header: 'BGG',
+        accessorFn: (row) => String(row.item_data.game_name ?? ''),
+        cell: ({ getValue }) => {
+          const name = getValue() as string
+          if (!name) return <span className="text-muted-foreground text-xs">—</span>
+          const url = `https://boardgamegeek.com/geeksearch.php?action=search&q=${encodeURIComponent(name)}&objecttype=boardgame`
+          return (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary hover:underline whitespace-nowrap"
+            >
+              BGG →
+            </a>
+          )
+        },
+        enableSorting: false,
+      } satisfies ColumnDef<AnalysisItem, unknown>)
+    }
+
+    if (isMtg) {
+      base.push({
+        id: '_manapool',
+        header: 'Manapool',
+        accessorFn: (row) => String(row.item_data.commander_name ?? ''),
+        cell: ({ getValue }) => {
+          const name = getValue() as string
+          if (!name) return <span className="text-muted-foreground text-xs">—</span>
+          const cards = name.split(' & ').map((s) => s.trim()).filter(Boolean)
+          return (
+            <div className="flex flex-col gap-1">
+              {cards.map((card) => {
+                const slug = card.toLowerCase().replace(/[^a-z0-9\s]/g, '').trim().replace(/\s+/g, '-')
+                return (
+                  <a
+                    key={card}
+                    href={`https://manapool.com/card/${slug}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-primary hover:underline whitespace-nowrap"
+                  >
+                    {card} →
+                  </a>
+                )
+              })}
+            </div>
+          )
+        },
+        enableSorting: false,
+      } satisfies ColumnDef<AnalysisItem, unknown>)
+    }
+    if (isAnime && malAuth.isAuthenticated) {
+      base.push(
+        {
+          id: '_mal_status',
+          header: 'MAL Status',
+          accessorFn: (row) => {
+            const linkedId = malLinks?.get(row.id)
+            return linkedId != null ? malLibrary?.byId.get(linkedId)?.status ?? null : null
+          },
+          cell: ({ row }) => {
+            const title   = String(row.original.item_data.series_title ?? '')
+            const itemId  = row.original.id
+            const linkedId = malLinks?.get(itemId)
+            const entry   = linkedId != null ? malLibrary?.byId.get(linkedId) : undefined
+
+            if (malAddingItemId === itemId) {
+              return (
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                  </svg>
+                  Adding…
+                </span>
+              )
+            }
+            if (!entry) {
+              return (
+                <button
+                  onClick={() => {
+                    setMalModalContext({ title, itemId })
+                    setMalModalResults([])
+                    setMalModalSearching(true)
+                    searchMAL.mutate(
+                      { title },
+                      {
+                        onSuccess: (results) => setMalModalResults(results),
+                        onSettled: () => setMalModalSearching(false),
+                      },
+                    )
+                  }}
+                  className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+                >
+                  + Add to MAL
+                </button>
+              )
+            }
+            if (malUpdatingId === entry.malId) {
+              return (
+                <span className="text-xs text-muted-foreground animate-pulse">
+                  {MAL_STATUS[entry.status] ?? '…'}
+                </span>
+              )
+            }
+            return (
+              <div className="flex items-center gap-1 group">
+                <select
+                  value={entry.status}
+                  onChange={(e) => {
+                    setMalUpdatingId(entry.malId)
+                    updateMALStatus.mutate(
+                      { malId: entry.malId, status: e.target.value },
+                      { onSettled: () => setMalUpdatingId(null) },
+                    )
+                  }}
+                  className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none"
+                >
+                  {Object.entries(MAL_STATUS).map(([val, label]) => (
+                    <option key={val} value={val}>{label}</option>
+                  ))}
+                </select>
+                <button
+                  title="Unlink from MAL"
+                  onClick={() => deleteMALLink.mutate(itemId)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive text-xs leading-none cursor-pointer"
+                >
+                  ✕
+                </button>
+              </div>
+            )
+          },
+          enableSorting: true,
+        } satisfies ColumnDef<AnalysisItem, unknown>,
+        {
+          id: '_mal_score',
+          header: 'Score',
+          accessorFn: (row) => {
+            const linkedId = malLinks?.get(row.id)
+            return linkedId != null ? malLibrary?.byId.get(linkedId)?.score ?? null : null
+          },
+          cell: ({ row }) => {
+            const itemId = row.original.id
+            const linkedId = malLinks?.get(itemId)
+            const entry  = linkedId != null ? malLibrary?.byId.get(linkedId) : undefined
+            if (!entry) return <span className="text-muted-foreground text-xs">—</span>
+            return (
+              <select
+                value={entry.score}
+                onChange={(e) =>
+                  updateMALScore.mutate({ malId: entry.malId, score: Number(e.target.value) })
+                }
+                className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none"
+              >
+                <option value={0}>—</option>
+                {[1,2,3,4,5,6,7,8,9,10].map((n) => (
+                  <option key={n} value={n}>{n}/10</option>
+                ))}
+              </select>
+            )
+          },
+          enableSorting: true,
+        } satisfies ColumnDef<AnalysisItem, unknown>,
+      )
+    }
+
+    // ── IGDB columns (Video Games) — custom layout for readability ───────────
+    if (isVideoGames) {
+      // Pull the columns we want to keep from the standard set
+      const indexCol  = base.find((c) => c.id === '_index')
+      const sourceCol = base.find((c) => c.id === '_source')
+      // All dynamic output_field columns (game_title, genre, playtime, why_play_it, etc.)
+      const dynCols = base.filter((c) => !String(c.id ?? '').startsWith('_'))
+
+      const igdbCoverCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_igdb_cover',
+        header: '',
+        accessorFn: () => null,
+        cell: ({ row }) => {
+          const link = igdbLinks?.get(row.original.id)
+          return (
+            <div className="w-14 h-[78px] rounded overflow-hidden bg-muted/60 flex-none">
+              {link?.coverUrl && (
+                <img
+                  src={link.coverUrl}
+                  alt={link.igdbTitle ?? ''}
+                  className="w-full h-full object-cover"
+                />
+              )}
+            </div>
+          )
+        },
+        enableSorting: false,
+        size: 72,
+      }
+
+      const igdbRatingCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_igdb_rating',
+        header: 'IGDB',
+        accessorFn: (row) => igdbLinks?.get(row.id)?.igdbRating ?? null,
+        cell: ({ row }) => {
+          const itemId    = row.original.id
+          const link      = igdbLinks?.get(itemId)
+          const gameTitle = String(row.original.item_data.game_title ?? '')
+          if (!link) {
+            return (
+              <button
+                onClick={() => openIGDBModal(gameTitle, itemId)}
+                className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors whitespace-nowrap"
+              >
+                + Link
+              </button>
+            )
+          }
+          return (
+            <div className="flex flex-col gap-1.5">
+              {/* Rating + action buttons */}
+              <div className="flex items-center gap-1 group">
+                <span className="text-xs font-medium text-foreground tabular-nums">
+                  {link.igdbRating != null ? `${Math.round(link.igdbRating)}/100` : '—'}
+                </span>
+                <button
+                  title="Re-link game"
+                  onClick={() => openIGDBModal(gameTitle, itemId)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground text-xs leading-none cursor-pointer"
+                >↺</button>
+                <button
+                  title="Unlink from IGDB"
+                  onClick={() => deleteIGDBLink.mutate(itemId)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive text-xs leading-none cursor-pointer"
+                >✕</button>
+              </div>
+              {/* Genre tags inline */}
+              {link.genres.length > 0 && (
+                <div className="flex flex-wrap gap-0.5">
+                  {link.genres.slice(0, 2).map((g) => (
+                    <span key={g} className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 leading-none whitespace-nowrap">
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        },
+        enableSorting: true,
+      }
+
+      const igdbScoreCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_igdb_my_score',
+        header: 'My Score',
+        accessorFn: (row) => igdbLinks?.get(row.id)?.personalScore ?? null,
+        cell: ({ row }) => {
+          const itemId = row.original.id
+          const link   = igdbLinks?.get(itemId)
+          if (!link) return <span className="text-muted-foreground text-xs">—</span>
+          return (
+            <select
+              value={link.personalScore ?? 0}
+              onChange={(e) =>
+                updateIGDBScore.mutate({ analysisItemId: itemId, personalScore: Number(e.target.value) || null })
+              }
+              className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none"
+            >
+              <option value={0}>—</option>
+              {[1,2,3,4,5,6,7,8,9,10].map((n) => (
+                <option key={n} value={n}>{n}/10</option>
+              ))}
+            </select>
+          )
+        },
+        enableSorting: true,
+      }
+
+      // Custom order: # | Cover | [content fields] | IGDB | My Score | Source
+      // Drops Added, Posted, Platform — noise for a personal game list.
+      return [
+        ...(indexCol  ? [indexCol]  : []),
+        igdbCoverCol,
+        ...dynCols,
+        igdbRatingCol,
+        igdbScoreCol,
+        ...(sourceCol ? [sourceCol] : []),
+      ]
+    }
+
+    return base
+  }, [category?.output_fields, hiddenKeys, handleLocationClick, isBoardGames, isMtg, isAnime,
+      isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
+      updateMALStatus, updateMALScore, searchMAL, deleteMALLink,
+      igdbLinks, searchIGDB, deleteIGDBLink, updateIGDBScore])
 
   // Flag lookup for the dropdown
   const getOptionLabel = (value: string) => {
@@ -369,6 +871,80 @@ export default function CategoryPage() {
         />
       )}
 
+      {/* MAL search modal */}
+      {malModalContext && (
+        <MALSearchModal
+          initialQuery={malModalContext.title}
+          results={malModalResults}
+          isSearching={malModalSearching}
+          onClose={() => setMalModalContext(null)}
+          onSearch={async (query) => {
+            setMalModalSearching(true)
+            return new Promise((resolve) => {
+              searchMAL.mutate(
+                { title: query },
+                {
+                  onSuccess: (results) => { setMalModalResults(results); resolve(results) },
+                  onError:   ()        => resolve([]),
+                  onSettled: ()        => setMalModalSearching(false),
+                },
+              )
+            })
+          }}
+          onSelect={(result) => {
+            const { itemId } = malModalContext
+            setMalModalContext(null)
+            setMalAddingItemId(itemId)
+            addMALAnime.mutate(
+              { malId: result.malId, status: 'plan_to_watch' },
+              {
+                onSuccess: () => {
+                  upsertMALLink.mutate(
+                    { analysisItemId: itemId, malAnimeId: result.malId, seriesTitle: result.title },
+                    { onSettled: () => setMalAddingItemId(null) },
+                  )
+                },
+                onError: () => setMalAddingItemId(null),
+              },
+            )
+          }}
+        />
+      )}
+
+      {/* IGDB search modal */}
+      {igdbModalContext && (
+        <IGDBSearchModal
+          initialQuery={igdbModalContext.title}
+          results={igdbModalResults}
+          isSearching={igdbModalSearching}
+          onClose={() => setIgdbModalContext(null)}
+          onSearch={(query) => {
+            setIgdbModalSearching(true)
+            searchIGDB.mutate(
+              { query },
+              {
+                onSuccess: (results) => setIgdbModalResults(results),
+                onSettled: () => setIgdbModalSearching(false),
+              },
+            )
+          }}
+          onSelect={(result) => {
+            const { itemId } = igdbModalContext
+            setIgdbModalContext(null)
+            upsertIGDBLink.mutate({
+              analysisItemId: itemId,
+              igdbGameId:     result.igdbId,
+              gameTitle:      result.title,
+              coverUrl:       result.coverUrl,
+              igdbRating:     result.rating,
+              genres:         result.genres,
+              platforms:      result.platforms,
+              releaseYear:    result.releaseYear,
+            })
+          }}
+        />
+      )}
+
       <div className="max-w-7xl mx-auto px-6 py-12">
 
         {/* Header */}
@@ -383,6 +959,178 @@ export default function CategoryPage() {
             <p className="mt-1 text-muted-foreground">{category.extraction_goal}</p>
           )}
         </div>
+
+        {/* MAL connect / disconnect banner */}
+        {isAnime && (
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/30 px-4 py-3">
+            {malAuth.isAuthenticated ? (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Connected to <span className="font-medium text-foreground">MyAnimeList</span> — status and score are synced with your list.
+                </p>
+                <div className="flex items-center gap-3 shrink-0">
+                  {/* Sync */}
+                  {malConfirming === 'sync' ? (
+                    <span className="flex items-center gap-2 text-xs">
+                      <span className="text-foreground font-medium">Sync with MAL?</span>
+                      <button
+                        onClick={() => { setMalConfirming(null); runMALSync() }}
+                        className="text-violet-600 hover:text-violet-700 underline underline-offset-2 cursor-pointer"
+                      >Confirm</button>
+                      <button
+                        onClick={() => setMalConfirming(null)}
+                        className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
+                      >Cancel</button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setMalConfirming('sync')}
+                      disabled={malSyncing || !malLibrary}
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {malSyncing ? (
+                        <>
+                          <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                          </svg>
+                          Syncing…
+                        </>
+                      ) : 'Sync'}
+                    </button>
+                  )}
+
+                  <span className="text-border">|</span>
+
+                  {/* Clear links */}
+                  {malConfirming === 'clear' ? (
+                    <span className="flex items-center gap-2 text-xs">
+                      <span className="text-foreground font-medium">Clear all links?</span>
+                      <button
+                        onClick={() => { setMalConfirming(null); clearAllMALLinks() }}
+                        className="text-destructive hover:text-destructive/80 underline underline-offset-2 cursor-pointer"
+                      >Confirm</button>
+                      <button
+                        onClick={() => setMalConfirming(null)}
+                        className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
+                      >Cancel</button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setMalConfirming('clear')}
+                      disabled={!malLinks || malLinks.size === 0}
+                      className="text-xs text-muted-foreground hover:text-destructive underline underline-offset-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Clear links
+                    </button>
+                  )}
+
+                  <span className="text-border">|</span>
+
+                  {/* Disconnect */}
+                  {malConfirming === 'disconnect' ? (
+                    <span className="flex items-center gap-2 text-xs">
+                      <span className="text-foreground font-medium">Disconnect MAL?</span>
+                      <button
+                        onClick={() => { setMalConfirming(null); malAuth.logout() }}
+                        className="text-destructive hover:text-destructive/80 underline underline-offset-2 cursor-pointer"
+                      >Confirm</button>
+                      <button
+                        onClick={() => setMalConfirming(null)}
+                        className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
+                      >Cancel</button>
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => setMalConfirming('disconnect')}
+                      className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 whitespace-nowrap cursor-pointer"
+                    >
+                      Disconnect
+                    </button>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-muted-foreground">
+                  Connect your <span className="font-medium text-foreground">MyAnimeList</span> account to track your watch status and scores.
+                </p>
+                <button
+                  onClick={malAuth.login}
+                  className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-medium hover:bg-violet-700 transition-colors cursor-pointer whitespace-nowrap"
+                >
+                  Connect MAL
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* IGDB sync banner */}
+        {isVideoGames && (
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/30 px-4 py-3">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">IGDB</span> — cover art, community ratings, genres and platforms via the Internet Game Database.
+            </p>
+            <div className="flex items-center gap-3 shrink-0">
+              {/* Sync */}
+              {igdbConfirming === 'sync' ? (
+                <span className="flex items-center gap-2 text-xs">
+                  <span className="text-foreground font-medium">Sync with IGDB?</span>
+                  <button
+                    onClick={() => { setIgdbConfirming(null); runIGDBSync() }}
+                    className="text-blue-600 hover:text-blue-700 underline underline-offset-2 cursor-pointer"
+                  >Confirm</button>
+                  <button
+                    onClick={() => setIgdbConfirming(null)}
+                    className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
+                  >Cancel</button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setIgdbConfirming('sync')}
+                  disabled={igdbSyncing}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {igdbSyncing ? (
+                    <>
+                      <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      Syncing…
+                    </>
+                  ) : 'Sync all'}
+                </button>
+              )}
+
+              <span className="text-border">|</span>
+
+              {/* Clear links */}
+              {igdbConfirming === 'clear' ? (
+                <span className="flex items-center gap-2 text-xs">
+                  <span className="text-foreground font-medium">Clear all links?</span>
+                  <button
+                    onClick={() => { setIgdbConfirming(null); clearAllIGDBLinks() }}
+                    className="text-destructive hover:text-destructive/80 underline underline-offset-2 cursor-pointer"
+                  >Confirm</button>
+                  <button
+                    onClick={() => setIgdbConfirming(null)}
+                    className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
+                  >Cancel</button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setIgdbConfirming('clear')}
+                  disabled={!igdbLinks || igdbLinks.size === 0}
+                  className="text-xs text-muted-foreground hover:text-destructive underline underline-offset-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Clear links
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Controls */}
         <div className="flex flex-col gap-3 mb-6">
