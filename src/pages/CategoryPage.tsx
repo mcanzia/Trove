@@ -27,6 +27,7 @@ import { HardcoverSearchModal } from '@/components/HardcoverSearchModal'
 import { BookCard } from '@/components/BookCard'
 import { MALSearchModal } from '@/components/MALSearchModal'
 import { IGDBSearchModal } from '@/components/IGDBSearchModal'
+import { TMDBSearchModal } from '@/components/TMDBSearchModal'
 import {
   useIGDBLinks,
   useUpsertIGDBLink,
@@ -35,6 +36,14 @@ import {
   useSearchIGDB,
   type IGDBGame,
 } from '@/hooks/useIGDB'
+import {
+  useTMDBLinks,
+  useUpsertTMDBLink,
+  useDeleteTMDBLink,
+  useUpdateTMDBScore,
+  useSearchTMDB,
+  type TMDBTitle,
+} from '@/hooks/useTMDB'
 import {
   useMALAuth,
   useMALAnimeList,
@@ -308,6 +317,10 @@ export default function CategoryPage() {
   const isBoardGames  = categoryName === 'Board Games'
   const isAnime       = categoryName === 'Anime & Manga'
   const isVideoGames  = categoryName === 'Video Game Recommendations'
+  const isMovies      = categoryName === 'Movies & Film Recommendations'
+  const isTVSeries    = categoryName === 'TV Series Recommendations'
+  const isTMDB        = isMovies || isTVSeries
+  const tmdbMediaType = isTVSeries ? 'tv' : 'movie'
   const { data: hardcoverLibrary }  = useHardcoverBooks()
   const { data: hardcoverLinks }    = useHardcoverLinks()
   const updateRating    = useUpdateHardcoverRating()
@@ -505,6 +518,107 @@ export default function CategoryPage() {
     setIgdbSyncing(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, igdbLinks, qc])
+
+  // ── TMDB integration (Movies + TV Series) ────────────────────────────────────
+  const { data: tmdbLinks }   = useTMDBLinks()
+  const upsertTMDBLink        = useUpsertTMDBLink()
+  const deleteTMDBLink        = useDeleteTMDBLink()
+  const updateTMDBScore       = useUpdateTMDBScore()
+  const searchTMDB            = useSearchTMDB()
+
+  const [tmdbModalContext,   setTmdbModalContext]   = useState<{ title: string; itemId: number } | null>(null)
+  const [tmdbModalResults,   setTmdbModalResults]   = useState<TMDBTitle[]>([])
+  const [tmdbModalSearching, setTmdbModalSearching] = useState(false)
+  const [tmdbSyncing,        setTmdbSyncing]        = useState(false)
+  const [tmdbConfirming,     setTmdbConfirming]     = useState<'sync' | 'clear' | null>(null)
+
+  const openTMDBModal = (title: string, itemId: number) => {
+    setTmdbModalContext({ title, itemId })
+    setTmdbModalResults([])
+    setTmdbModalSearching(true)
+    searchTMDB.mutate(
+      { query: title, mediaType: tmdbMediaType },
+      {
+        onSuccess: (results) => setTmdbModalResults(results),
+        onSettled: () => setTmdbModalSearching(false),
+      },
+    )
+  }
+
+  const clearAllTMDBLinks = useCallback(async () => {
+    if (!tmdbLinks || tmdbLinks.size === 0) return
+    qc.setQueryData(['tmdb-links'], new Map())
+    const ids = Array.from(tmdbLinks.keys())
+    await supabase.from('tmdb_links').delete().in('analysis_item_id', ids)
+    qc.invalidateQueries({ queryKey: ['tmdb-links'] })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tmdbLinks, qc])
+
+  const runTMDBSync = useCallback(async () => {
+    if (!items || !tmdbLinks) return
+    setTmdbSyncing(true)
+    try {
+      const titleKey = isMovies ? 'movie_title' : 'series_title'
+      const unlinked = items
+        .filter((item) => !tmdbLinks.has(item.id))
+        .map((item) => ({
+          itemId: item.id,
+          title:  String(item.item_data[titleKey] ?? item.item_data.title ?? '').trim(),
+        }))
+        .filter((x) => x.title)
+
+      if (unlinked.length === 0) { setTmdbSyncing(false); return }
+
+      const { data, error } = await supabase.functions.invoke('tmdb-proxy', {
+        body: { action: 'batch-sync', titles: unlinked.map((x) => x.title), mediaType: tmdbMediaType },
+      })
+      if (error) throw error
+      if (data?.error) throw new Error(String(data.error))
+
+      type BatchResult = { originalTitle: string; tmdbId: number; title: string; posterUrl: string | null; rating: number | null; genres: string[]; releaseYear: number | null; mediaType: 'movie' | 'tv' }
+      const matched = data as BatchResult[]
+      if (matched.length === 0) { setTmdbSyncing(false); return }
+
+      const byTitle = new Map(matched.map((m) => [m.originalTitle, m]))
+      const rows = unlinked
+        .filter((x) => byTitle.has(x.title))
+        .map(({ itemId, title }) => {
+          const m = byTitle.get(title)! as BatchResult
+          return {
+            analysis_item_id: itemId,
+            tmdb_id:          m.tmdbId,
+            media_type:       m.mediaType,
+            tmdb_title:       m.title       ?? null,
+            poster_url:       m.posterUrl   ?? null,
+            tmdb_rating:      m.rating      ?? null,
+            genres:           m.genres      ?? [],
+            release_year:     m.releaseYear ?? null,
+          }
+        })
+      if (rows.length > 0) await supabase.from('tmdb_links').upsert(rows)
+
+      const current = qc.getQueryData<Map<number, TMDBTitle>>(['tmdb-links']) ?? new Map()
+      const next    = new Map(current)
+      for (const { itemId, title } of unlinked) {
+        const m = byTitle.get(title)
+        if (m) next.set(itemId, {
+          tmdbId:        m.tmdbId,
+          tmdbTitle:     m.title       ?? null,
+          mediaType:     m.mediaType,
+          personalScore: null,
+          posterUrl:     m.posterUrl   ?? null,
+          tmdbRating:    m.rating      ?? null,
+          genres:        m.genres      ?? [],
+          releaseYear:   m.releaseYear ?? null,
+        } as any)
+      }
+      qc.setQueryData(['tmdb-links'], next)
+    } catch (e) {
+      console.error('TMDB sync error:', e)
+    }
+    setTmdbSyncing(false)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, tmdbLinks, isMovies, tmdbMediaType, qc])
 
   // Two-step add: first search (shows match for confirmation), then add
   const [addingTitle, setAddingTitle]           = useState<string | null>(null)
@@ -811,11 +925,127 @@ export default function CategoryPage() {
       ]
     }
 
+    // ── TMDB columns (Movies + TV Series) — same layout as Video Games ───────
+    if (isTMDB) {
+      const indexCol  = base.find((c) => c.id === '_index')
+      const sourceCol = base.find((c) => c.id === '_source')
+      const dynCols   = base.filter((c) => !String(c.id ?? '').startsWith('_'))
+      const titleKey  = isMovies ? 'movie_title' : 'series_title'
+
+      const tmdbCoverCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_tmdb_cover',
+        header: '',
+        accessorFn: () => null,
+        cell: ({ row }) => {
+          const link = tmdbLinks?.get(row.original.id)
+          return (
+            <div className="w-14 h-[78px] rounded overflow-hidden bg-muted/60 flex-none">
+              {link?.posterUrl && (
+                <img
+                  src={link.posterUrl}
+                  alt={link.tmdbTitle ?? ''}
+                  className="w-full h-full object-cover"
+                />
+              )}
+            </div>
+          )
+        },
+        enableSorting: false,
+        size: 72,
+      }
+
+      const tmdbRatingCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_tmdb_rating',
+        header: 'TMDB',
+        accessorFn: (row) => tmdbLinks?.get(row.id)?.tmdbRating ?? null,
+        cell: ({ row }) => {
+          const itemId = row.original.id
+          const link   = tmdbLinks?.get(itemId)
+          const title  = String(row.original.item_data[titleKey] ?? row.original.item_data.title ?? '')
+          if (!link) {
+            return (
+              <button
+                onClick={() => openTMDBModal(title, itemId)}
+                className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors whitespace-nowrap"
+              >
+                + Link
+              </button>
+            )
+          }
+          return (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1 group">
+                <span className="text-xs font-medium text-foreground tabular-nums">
+                  {link.tmdbRating != null ? `${link.tmdbRating.toFixed(1)}/10` : '—'}
+                </span>
+                <button
+                  title="Re-link"
+                  onClick={() => openTMDBModal(title, itemId)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground text-xs leading-none cursor-pointer"
+                >↺</button>
+                <button
+                  title="Unlink from TMDB"
+                  onClick={() => deleteTMDBLink.mutate(itemId)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive text-xs leading-none cursor-pointer"
+                >✕</button>
+              </div>
+              {link.genres.length > 0 && (
+                <div className="flex flex-wrap gap-0.5">
+                  {link.genres.slice(0, 2).map((g) => (
+                    <span key={g} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 leading-none whitespace-nowrap">
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        },
+        enableSorting: true,
+      }
+
+      const tmdbScoreCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_tmdb_my_score',
+        header: 'My Score',
+        accessorFn: (row) => tmdbLinks?.get(row.id)?.personalScore ?? null,
+        cell: ({ row }) => {
+          const itemId = row.original.id
+          const link   = tmdbLinks?.get(itemId)
+          if (!link) return <span className="text-muted-foreground text-xs">—</span>
+          return (
+            <select
+              value={link.personalScore ?? 0}
+              onChange={(e) =>
+                updateTMDBScore.mutate({ analysisItemId: itemId, personalScore: Number(e.target.value) || null })
+              }
+              className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none"
+            >
+              <option value={0}>—</option>
+              {[1,2,3,4,5,6,7,8,9,10].map((n) => (
+                <option key={n} value={n}>{n}/10</option>
+              ))}
+            </select>
+          )
+        },
+        enableSorting: true,
+      }
+
+      return [
+        ...(indexCol  ? [indexCol]  : []),
+        tmdbCoverCol,
+        ...dynCols,
+        tmdbRatingCol,
+        tmdbScoreCol,
+        ...(sourceCol ? [sourceCol] : []),
+      ]
+    }
+
     return base
   }, [category?.output_fields, hiddenKeys, handleLocationClick, isBoardGames, isMtg, isAnime,
       isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
       updateMALStatus, updateMALScore, searchMAL, deleteMALLink,
-      igdbLinks, searchIGDB, deleteIGDBLink, updateIGDBScore])
+      igdbLinks, searchIGDB, deleteIGDBLink, updateIGDBScore,
+      isTMDB, isMovies, tmdbLinks, deleteTMDBLink, updateTMDBScore])
 
   // Flag lookup for the dropdown
   const getOptionLabel = (value: string) => {
@@ -907,6 +1137,41 @@ export default function CategoryPage() {
                 onError: () => setMalAddingItemId(null),
               },
             )
+          }}
+        />
+      )}
+
+      {/* TMDB search modal */}
+      {tmdbModalContext && (
+        <TMDBSearchModal
+          initialQuery={tmdbModalContext.title}
+          mediaType={tmdbMediaType}
+          results={tmdbModalResults}
+          isSearching={tmdbModalSearching}
+          onClose={() => setTmdbModalContext(null)}
+          onSearch={(query) => {
+            setTmdbModalSearching(true)
+            searchTMDB.mutate(
+              { query, mediaType: tmdbMediaType },
+              {
+                onSuccess: (results) => setTmdbModalResults(results),
+                onSettled: () => setTmdbModalSearching(false),
+              },
+            )
+          }}
+          onSelect={(result) => {
+            const { itemId } = tmdbModalContext
+            setTmdbModalContext(null)
+            upsertTMDBLink.mutate({
+              analysisItemId: itemId,
+              tmdbId:         result.tmdbId,
+              mediaType:      result.mediaType,
+              tmdbTitle:      result.title,
+              posterUrl:      result.posterUrl,
+              tmdbRating:     result.rating,
+              genres:         result.genres,
+              releaseYear:    result.releaseYear,
+            })
           }}
         />
       )}
@@ -1123,6 +1388,70 @@ export default function CategoryPage() {
                 <button
                   onClick={() => setIgdbConfirming('clear')}
                   disabled={!igdbLinks || igdbLinks.size === 0}
+                  className="text-xs text-muted-foreground hover:text-destructive underline underline-offset-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  Clear links
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TMDB sync banner */}
+        {isTMDB && (
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/30 px-4 py-3">
+            <p className="text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">TMDB</span> — poster art, community ratings and genres via The Movie Database.
+            </p>
+            <div className="flex items-center gap-3 shrink-0">
+              {tmdbConfirming === 'sync' ? (
+                <span className="flex items-center gap-2 text-xs">
+                  <span className="text-foreground font-medium">Sync with TMDB?</span>
+                  <button
+                    onClick={() => { setTmdbConfirming(null); runTMDBSync() }}
+                    className="text-rose-600 hover:text-rose-700 underline underline-offset-2 cursor-pointer"
+                  >Confirm</button>
+                  <button
+                    onClick={() => setTmdbConfirming(null)}
+                    className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
+                  >Cancel</button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setTmdbConfirming('sync')}
+                  disabled={tmdbSyncing}
+                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  {tmdbSyncing ? (
+                    <>
+                      <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                      </svg>
+                      Syncing…
+                    </>
+                  ) : 'Sync all'}
+                </button>
+              )}
+
+              <span className="text-border">|</span>
+
+              {tmdbConfirming === 'clear' ? (
+                <span className="flex items-center gap-2 text-xs">
+                  <span className="text-foreground font-medium">Clear all links?</span>
+                  <button
+                    onClick={() => { setTmdbConfirming(null); clearAllTMDBLinks() }}
+                    className="text-destructive hover:text-destructive/80 underline underline-offset-2 cursor-pointer"
+                  >Confirm</button>
+                  <button
+                    onClick={() => setTmdbConfirming(null)}
+                    className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
+                  >Cancel</button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => setTmdbConfirming('clear')}
+                  disabled={!tmdbLinks || tmdbLinks.size === 0}
                   className="text-xs text-muted-foreground hover:text-destructive underline underline-offset-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                 >
                   Clear links
