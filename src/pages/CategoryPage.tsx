@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { ChevronDown, MapPin, Table2, Map as MapIcon } from 'lucide-react'
 import { useAnalysisItems } from '@/hooks/useAnalysisItems'
 import { useCategories } from '@/hooks/useCategories'
+import { useTravelLocations } from '@/hooks/useTravelLocations'
 import { DataTable } from '@/components/DataTable'
 import { getLanguageFlag } from '@/lib/languageFlags'
 import { getCountryFlag } from '@/lib/countryFlags'
@@ -22,6 +23,7 @@ import {
   useAddBookByTitle,
   findHardcoverBook,
   type HardcoverSearchResult,
+  type HardcoverLinkData,
 } from '@/hooks/useHardcoverBooks'
 import { HardcoverSearchModal } from '@/components/HardcoverSearchModal'
 import { BookCard } from '@/components/BookCard'
@@ -69,6 +71,7 @@ function buildColumns(
   fields: OutputField[],
   hiddenKeys: string[] = [],
   onLocationClick?: (lat: number, lng: number, itemId: number) => void,
+  locationsMap?: Map<number, { lat: number; lng: number; label: string; type: string }[]> | null,
 ): ColumnDef<AnalysisItem, unknown>[] {
   const dynamic: ColumnDef<AnalysisItem, unknown>[] = fields
     .filter((f) => !hiddenKeys.includes(f.key))
@@ -139,8 +142,10 @@ function buildColumns(
       id: '_location',
       header: 'Location',
       accessorFn: (row: AnalysisItem) => {
-        const locs = row.item_data._locations as { lat: number; lng: number }[] | undefined
-        if (!locs?.length) return ''
+        const locs = locationsMap
+          ? (locationsMap.get(row.id) ?? [])
+          : (row.item_data._locations as { lat: number; lng: number }[] | undefined) ?? []
+        if (!locs.length) return ''
         return `${locs[0].lat},${locs[0].lng}`
       },
       cell: ({ row, getValue }: { row: { original: AnalysisItem }, getValue: () => unknown }) => {
@@ -245,6 +250,7 @@ export default function CategoryPage() {
   )
 
   const { data: items, isLoading, error } = useAnalysisItems({ categoryName, platform })
+  const { data: travelLocations } = useTravelLocations()
 
   const groupBy = category?.group_by
 
@@ -330,17 +336,10 @@ export default function CategoryPage() {
   const upsertLink      = useUpsertHardcoverLink()
   const deleteLink      = useDeleteHardcoverLink()
 
-  // Whenever the library and links are both loaded, remove any links
-  // whose bookId no longer exists in the Hardcover library (book was removed).
-  useEffect(() => {
-    if (!hardcoverLibrary || !hardcoverLinks) return
-    for (const [itemId, bookId] of hardcoverLinks) {
-      if (!hardcoverLibrary.byBookId.has(bookId)) {
-        deleteLink.mutate(itemId)
-      }
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hardcoverLibrary, hardcoverLinks])
+  // NOTE: Stale link cleanup removed — hardcover_links now stores backend-synced
+  // enrichment (cover art, rating, genres) for all books, not just personally-tracked
+  // ones. Deleting rows for books absent from the personal library would wipe that
+  // enrichment data. Individual rows can still be unlinked via the row-level ↺ button.
   // ── MAL integration (Anime & Manga only) ────────────────────────────────────
   const malAuth               = useMALAuth()
   const { data: malLibrary }  = useMALAnimeList()
@@ -352,32 +351,14 @@ export default function CategoryPage() {
   const upsertMALLink         = useUpsertMALLink()
   const deleteMALLink         = useDeleteMALLink()
 
-  // Clean up stale mal_links whose anime no longer exists in library
-  useEffect(() => {
-    if (!malLibrary || !malLinks) return
-    for (const [itemId, animeId] of malLinks) {
-      if (!malLibrary.byId.has(animeId)) deleteMALLink.mutate(itemId)
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [malLibrary, malLinks])
+  // Note: we intentionally do NOT auto-delete mal_links when an anime isn't in
+  // the user's personal library. mal_links stores backend-synced enrichment data
+  // (cover art, community score, genres) for ALL anime items regardless of
+  // personal tracking status. Users remove links explicitly via the ✕ button.
 
   // Auto-sync: title-match unlinked Trove entries against existing MAL library.
-  const [malSyncing, setMalSyncing] = useState(false)
-
-  const clearAllMALLinks = useCallback(async () => {
-    if (!malLinks || malLinks.size === 0) return
-    // Optimistically clear UI immediately
-    qc.setQueryData(['mal-links'], new Map())
-    // Single delete request for all IDs
-    const ids = Array.from(malLinks.keys())
-    await supabase.from('mal_links').delete().in('analysis_item_id', ids)
-    qc.invalidateQueries({ queryKey: ['mal-links'] })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [malLinks, qc])
-
   const runMALSync = useCallback(() => {
     if (!items || !malLibrary || !malLinks) return
-    setMalSyncing(true)
     const pending: Promise<unknown>[] = []
     for (const item of items) {
       const title = String(item.item_data.series_title ?? '')
@@ -395,11 +376,15 @@ export default function CategoryPage() {
         )
       }
     }
-    Promise.all(pending).finally(() => setMalSyncing(false))
+    Promise.all(pending)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, malLibrary, malLinks])
 
-  // Auto-sync on page load removed — user triggers sync manually via the Sync button.
+  // Auto-sync personal list when the MAL library first loads after connecting.
+  useEffect(() => {
+    if (isAnime && malLibrary) runMALSync()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [malLibrary])
 
   const [malAddingItemId, setMalAddingItemId]     = useState<number | null>(null)
   const [malUpdatingId,   setMalUpdatingId]       = useState<number | null>(null)
@@ -407,8 +392,8 @@ export default function CategoryPage() {
   const [malModalResults, setMalModalResults]     = useState<MALSearchResult[]>([])
   const [malModalSearching, setMalModalSearching] = useState(false)
 
-  // Inline confirmation state for destructive banner actions
-  const [malConfirming, setMalConfirming] = useState<'sync' | 'clear' | 'disconnect' | null>(null)
+  // Inline confirmation state for disconnect action
+  const [malConfirming, setMalConfirming] = useState<'disconnect' | null>(null)
 
   // ── IGDB integration (Video Games only) ─────────────────────────────────────
   const { data: igdbLinks }   = useIGDBLinks()
@@ -420,8 +405,6 @@ export default function CategoryPage() {
   const [igdbModalContext,   setIgdbModalContext]   = useState<{ title: string; itemId: number } | null>(null)
   const [igdbModalResults,   setIgdbModalResults]   = useState<IGDBGame[]>([])
   const [igdbModalSearching, setIgdbModalSearching] = useState(false)
-  const [igdbSyncing,        setIgdbSyncing]        = useState(false)
-  const [igdbConfirming,     setIgdbConfirming]     = useState<'sync' | 'clear' | null>(null)
 
   const openIGDBModal = (title: string, itemId: number) => {
     setIgdbModalContext({ title, itemId })
@@ -436,22 +419,9 @@ export default function CategoryPage() {
     )
   }
 
-  const clearAllIGDBLinks = useCallback(async () => {
-    if (!igdbLinks || igdbLinks.size === 0) return
-    // Optimistically clear UI immediately
-    qc.setQueryData(['igdb-links'], new Map())
-    // Single delete request for all IDs
-    const ids = Array.from(igdbLinks.keys())
-    await supabase.from('igdb_links').delete().in('analysis_item_id', ids)
-    qc.invalidateQueries({ queryKey: ['igdb-links'] })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [igdbLinks, qc])
-
   const runIGDBSync = useCallback(async () => {
     if (!items || !igdbLinks) return
-    setIgdbSyncing(true)
     try {
-      // Collect unlinked items and their titles
       const unlinked = items
         .filter((item) => !igdbLinks.has(item.id))
         .map((item) => ({
@@ -460,9 +430,8 @@ export default function CategoryPage() {
         }))
         .filter((x) => x.title)
 
-      if (unlinked.length === 0) { setIgdbSyncing(false); return }
+      if (unlinked.length === 0) return
 
-      // Single multiquery request — no rate-limit risk
       const { data, error } = await supabase.functions.invoke('igdb-proxy', {
         body: { action: 'batch-sync', titles: unlinked.map((x) => x.title) },
       })
@@ -471,13 +440,10 @@ export default function CategoryPage() {
 
       type BatchResult = { title: string; igdbId: number; igdbTitle: string; coverUrl: string | null; rating: number | null; genres: string[]; platforms: string[]; releaseYear: number | null }
       const matched = data as BatchResult[]
+      if (matched.length === 0) return
 
-      if (matched.length === 0) { setIgdbSyncing(false); return }
-
-      // Build a title → match lookup
       const byTitle = new Map(matched.map((m) => [m.title, m]))
 
-      // Single bulk upsert — one Supabase request for all matched games
       const rows = unlinked
         .filter((x) => byTitle.has(x.title))
         .map(({ itemId, title }) => {
@@ -495,7 +461,6 @@ export default function CategoryPage() {
         })
       if (rows.length > 0) await supabase.from('igdb_links').upsert(rows)
 
-      // Apply all new links to the cache in one shot — no per-row flashing
       const current = qc.getQueryData<Map<number, { igdbGameId: number; personalScore: number | null }>>(['igdb-links']) ?? new Map()
       const next    = new Map(current)
       for (const { itemId, title } of unlinked) {
@@ -515,9 +480,14 @@ export default function CategoryPage() {
     } catch (e) {
       console.error('IGDB sync error:', e)
     }
-    setIgdbSyncing(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, igdbLinks, qc])
+
+  // Auto-sync IGDB when items and links first load — runs once per page visit.
+  useEffect(() => {
+    if (isVideoGames && items && igdbLinks) runIGDBSync()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isVideoGames, items, igdbLinks])
 
   // ── TMDB integration (Movies + TV Series) ────────────────────────────────────
   const { data: tmdbLinks }   = useTMDBLinks()
@@ -529,8 +499,6 @@ export default function CategoryPage() {
   const [tmdbModalContext,   setTmdbModalContext]   = useState<{ title: string; itemId: number } | null>(null)
   const [tmdbModalResults,   setTmdbModalResults]   = useState<TMDBTitle[]>([])
   const [tmdbModalSearching, setTmdbModalSearching] = useState(false)
-  const [tmdbSyncing,        setTmdbSyncing]        = useState(false)
-  const [tmdbConfirming,     setTmdbConfirming]     = useState<'sync' | 'clear' | null>(null)
 
   const openTMDBModal = (title: string, itemId: number) => {
     setTmdbModalContext({ title, itemId })
@@ -545,18 +513,8 @@ export default function CategoryPage() {
     )
   }
 
-  const clearAllTMDBLinks = useCallback(async () => {
-    if (!tmdbLinks || tmdbLinks.size === 0) return
-    qc.setQueryData(['tmdb-links'], new Map())
-    const ids = Array.from(tmdbLinks.keys())
-    await supabase.from('tmdb_links').delete().in('analysis_item_id', ids)
-    qc.invalidateQueries({ queryKey: ['tmdb-links'] })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tmdbLinks, qc])
-
   const runTMDBSync = useCallback(async () => {
     if (!items || !tmdbLinks) return
-    setTmdbSyncing(true)
     try {
       const titleKey = isMovies ? 'movie_title' : 'series_title'
       const unlinked = items
@@ -567,7 +525,7 @@ export default function CategoryPage() {
         }))
         .filter((x) => x.title)
 
-      if (unlinked.length === 0) { setTmdbSyncing(false); return }
+      if (unlinked.length === 0) return
 
       const { data, error } = await supabase.functions.invoke('tmdb-proxy', {
         body: { action: 'batch-sync', titles: unlinked.map((x) => x.title), mediaType: tmdbMediaType },
@@ -577,7 +535,7 @@ export default function CategoryPage() {
 
       type BatchResult = { originalTitle: string; tmdbId: number; title: string; posterUrl: string | null; rating: number | null; genres: string[]; releaseYear: number | null; mediaType: 'movie' | 'tv' }
       const matched = data as BatchResult[]
-      if (matched.length === 0) { setTmdbSyncing(false); return }
+      if (matched.length === 0) return
 
       const byTitle = new Map(matched.map((m) => [m.originalTitle, m]))
       const rows = unlinked
@@ -616,9 +574,14 @@ export default function CategoryPage() {
     } catch (e) {
       console.error('TMDB sync error:', e)
     }
-    setTmdbSyncing(false)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, tmdbLinks, isMovies, tmdbMediaType, qc])
+
+  // Auto-sync TMDB when items and links first load — runs once per page visit.
+  useEffect(() => {
+    if (isTMDB && items && tmdbLinks) runTMDBSync()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTMDB, items, tmdbLinks])
 
   // Two-step add: first search (shows match for confirmation), then add
   const [addingTitle, setAddingTitle]           = useState<string | null>(null)
@@ -633,7 +596,7 @@ export default function CategoryPage() {
   const [modalSearching, setModalSearching] = useState(false)
 
   const columns = useMemo(() => {
-    const base = buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick)
+    const base = buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick, travelLocations)
 
     if (isBoardGames) {
       base.push({
@@ -690,20 +653,104 @@ export default function CategoryPage() {
         enableSorting: false,
       } satisfies ColumnDef<AnalysisItem, unknown>)
     }
-    if (isAnime && malAuth.isAuthenticated) {
-      base.push(
+    if (isAnime) {
+      // ── Always-visible columns: cover art + MAL community score ─────────
+      const indexCol  = base.find((c) => c.id === '_index')
+      const sourceCol = base.find((c) => c.id === '_source')
+      const dynCols   = base.filter((c) => !String(c.id ?? '').startsWith('_'))
+
+      const malCoverCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_mal_cover',
+        header: '',
+        accessorFn: () => null,
+        cell: ({ row }) => {
+          const link     = malLinks?.get(row.original.id)
+          const coverUrl = link?.coverUrl
+          const title    = link?.seriesTitle ?? String(row.original.item_data.series_title ?? '')
+          return (
+            <div className="w-10 h-[60px] rounded overflow-hidden bg-muted/60 flex-none">
+              {coverUrl && (
+                <img src={coverUrl} alt={title} className="w-full h-full object-cover" />
+              )}
+            </div>
+          )
+        },
+        enableSorting: false,
+        size: 52,
+      }
+
+      const malScoreCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_mal_community_score',
+        header: 'MAL',
+        accessorFn: (row) => malLinks?.get(row.id)?.malScore ?? null,
+        cell: ({ row }) => {
+          const link   = malLinks?.get(row.original.id)
+          const score  = link?.malScore
+          const genres = link?.genres
+          const itemId = row.original.id
+          const title  = String(row.original.item_data.series_title ?? '')
+
+          if (!link) {
+            // No mal_link yet — show a manual link button (auth required to add to MAL list)
+            return (
+              <button
+                onClick={() => {
+                  setMalModalContext({ title, itemId })
+                  setMalModalResults([])
+                  setMalModalSearching(true)
+                  searchMAL.mutate(
+                    { title },
+                    {
+                      onSuccess: (results) => setMalModalResults(results),
+                      onSettled: () => setMalModalSearching(false),
+                    },
+                  )
+                }}
+                className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
+              >
+                + Link
+              </button>
+            )
+          }
+          return (
+            <div className="flex flex-col gap-1.5">
+              {score != null && (
+                <span className="text-xs font-medium text-foreground tabular-nums">
+                  {score.toFixed(2)}/10
+                </span>
+              )}
+              {genres && genres.length > 0 && (
+                <div className="flex flex-wrap gap-0.5">
+                  {genres.slice(0, 2).map((g) => (
+                    <span key={g} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 leading-none whitespace-nowrap">
+                      {g}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        },
+        enableSorting: true,
+      }
+
+      // Rebuild column order: # | Cover | [content fields] | MAL score | [auth cols if logged in] | Source
+      const authCols: ColumnDef<AnalysisItem, unknown>[] = []
+      if (malAuth.isAuthenticated) {
+        authCols.push(
         {
           id: '_mal_status',
           header: 'MAL Status',
           accessorFn: (row) => {
-            const linkedId = malLinks?.get(row.id)
-            return linkedId != null ? malLibrary?.byId.get(linkedId)?.status ?? null : null
+            const link = malLinks?.get(row.id)
+            return link != null ? malLibrary?.byId.get(link.malAnimeId)?.status ?? null : null
           },
           cell: ({ row }) => {
-            const title   = String(row.original.item_data.series_title ?? '')
-            const itemId  = row.original.id
-            const linkedId = malLinks?.get(itemId)
-            const entry   = linkedId != null ? malLibrary?.byId.get(linkedId) : undefined
+            const title    = String(row.original.item_data.series_title ?? '')
+            const itemId   = row.original.id
+            const link     = malLinks?.get(itemId)
+            const linkedId = link?.malAnimeId
+            const entry    = linkedId != null ? malLibrary?.byId.get(linkedId) : undefined
 
             if (malAddingItemId === itemId) {
               return (
@@ -717,6 +764,8 @@ export default function CategoryPage() {
               )
             }
             if (!entry) {
+              // Has enrichment data from backend but not yet in user's personal list
+              const hasLink = malLinks?.has(itemId)
               return (
                 <button
                   onClick={() => {
@@ -733,7 +782,7 @@ export default function CategoryPage() {
                   }}
                   className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 transition-colors"
                 >
-                  + Add to MAL
+                  {hasLink ? '+ Track on MAL' : '+ Add to MAL'}
                 </button>
               )
             }
@@ -777,13 +826,14 @@ export default function CategoryPage() {
           id: '_mal_score',
           header: 'Score',
           accessorFn: (row) => {
-            const linkedId = malLinks?.get(row.id)
-            return linkedId != null ? malLibrary?.byId.get(linkedId)?.score ?? null : null
+            const link = malLinks?.get(row.id)
+            return link != null ? malLibrary?.byId.get(link.malAnimeId)?.score ?? null : null
           },
           cell: ({ row }) => {
-            const itemId = row.original.id
-            const linkedId = malLinks?.get(itemId)
-            const entry  = linkedId != null ? malLibrary?.byId.get(linkedId) : undefined
+            const itemId   = row.original.id
+            const link     = malLinks?.get(itemId)
+            const linkedId = link?.malAnimeId
+            const entry    = linkedId != null ? malLibrary?.byId.get(linkedId) : undefined
             if (!entry) return <span className="text-muted-foreground text-xs">—</span>
             return (
               <select
@@ -802,7 +852,17 @@ export default function CategoryPage() {
           },
           enableSorting: true,
         } satisfies ColumnDef<AnalysisItem, unknown>,
-      )
+        )
+      } // end if (malAuth.isAuthenticated)
+
+      return [
+        ...(indexCol  ? [indexCol]  : []),
+        malCoverCol,
+        ...dynCols,
+        malScoreCol,
+        ...authCols,
+        ...(sourceCol ? [sourceCol] : []),
+      ]
     }
 
     // ── IGDB columns (Video Games) — custom layout for readability ───────────
@@ -1030,10 +1090,26 @@ export default function CategoryPage() {
         enableSorting: true,
       }
 
+      const tmdbYearCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_tmdb_year',
+        header: 'Year',
+        accessorFn: (row) => tmdbLinks?.get(row.id)?.releaseYear ?? null,
+        cell: ({ row }) => {
+          const year = tmdbLinks?.get(row.original.id)?.releaseYear
+          return (
+            <span className="text-muted-foreground tabular-nums text-xs whitespace-nowrap">
+              {year ?? '—'}
+            </span>
+          )
+        },
+        enableSorting: true,
+      }
+
       return [
         ...(indexCol  ? [indexCol]  : []),
         tmdbCoverCol,
         ...dynCols,
+        tmdbYearCol,
         tmdbRatingCol,
         tmdbScoreCol,
         ...(sourceCol ? [sourceCol] : []),
@@ -1041,9 +1117,10 @@ export default function CategoryPage() {
     }
 
     return base
-  }, [category?.output_fields, hiddenKeys, handleLocationClick, isBoardGames, isMtg, isAnime,
+  }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations,
+      isBoardGames, isMtg, isAnime,
       isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
-      updateMALStatus, updateMALScore, searchMAL, deleteMALLink,
+      updateMALStatus, updateMALScore, searchMAL, deleteMALLink, items,
       igdbLinks, searchIGDB, deleteIGDBLink, updateIGDBScore,
       isTMDB, isMovies, tmdbLinks, deleteTMDBLink, updateTMDBScore])
 
@@ -1090,6 +1167,7 @@ export default function CategoryPage() {
                       analysisItemId:  itemId,
                       hardcoverBookId: result.bookId,
                       bookTitle:       result.title,
+                      coverUrl:        result.coverUrl,
                     },
                     { onSettled: () => setAddingItemId(null) },
                   )
@@ -1234,65 +1312,6 @@ export default function CategoryPage() {
                   Connected to <span className="font-medium text-foreground">MyAnimeList</span> — status and score are synced with your list.
                 </p>
                 <div className="flex items-center gap-3 shrink-0">
-                  {/* Sync */}
-                  {malConfirming === 'sync' ? (
-                    <span className="flex items-center gap-2 text-xs">
-                      <span className="text-foreground font-medium">Sync with MAL?</span>
-                      <button
-                        onClick={() => { setMalConfirming(null); runMALSync() }}
-                        className="text-violet-600 hover:text-violet-700 underline underline-offset-2 cursor-pointer"
-                      >Confirm</button>
-                      <button
-                        onClick={() => setMalConfirming(null)}
-                        className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
-                      >Cancel</button>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => setMalConfirming('sync')}
-                      disabled={malSyncing || !malLibrary}
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      {malSyncing ? (
-                        <>
-                          <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                          </svg>
-                          Syncing…
-                        </>
-                      ) : 'Sync'}
-                    </button>
-                  )}
-
-                  <span className="text-border">|</span>
-
-                  {/* Clear links */}
-                  {malConfirming === 'clear' ? (
-                    <span className="flex items-center gap-2 text-xs">
-                      <span className="text-foreground font-medium">Clear all links?</span>
-                      <button
-                        onClick={() => { setMalConfirming(null); clearAllMALLinks() }}
-                        className="text-destructive hover:text-destructive/80 underline underline-offset-2 cursor-pointer"
-                      >Confirm</button>
-                      <button
-                        onClick={() => setMalConfirming(null)}
-                        className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
-                      >Cancel</button>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => setMalConfirming('clear')}
-                      disabled={!malLinks || malLinks.size === 0}
-                      className="text-xs text-muted-foreground hover:text-destructive underline underline-offset-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                    >
-                      Clear links
-                    </button>
-                  )}
-
-                  <span className="text-border">|</span>
-
-                  {/* Disconnect */}
                   {malConfirming === 'disconnect' ? (
                     <span className="flex items-center gap-2 text-xs">
                       <span className="text-foreground font-medium">Disconnect MAL?</span>
@@ -1331,135 +1350,7 @@ export default function CategoryPage() {
           </div>
         )}
 
-        {/* IGDB sync banner */}
-        {isVideoGames && (
-          <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/30 px-4 py-3">
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">IGDB</span> — cover art, community ratings, genres and platforms via the Internet Game Database.
-            </p>
-            <div className="flex items-center gap-3 shrink-0">
-              {/* Sync */}
-              {igdbConfirming === 'sync' ? (
-                <span className="flex items-center gap-2 text-xs">
-                  <span className="text-foreground font-medium">Sync with IGDB?</span>
-                  <button
-                    onClick={() => { setIgdbConfirming(null); runIGDBSync() }}
-                    className="text-blue-600 hover:text-blue-700 underline underline-offset-2 cursor-pointer"
-                  >Confirm</button>
-                  <button
-                    onClick={() => setIgdbConfirming(null)}
-                    className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
-                  >Cancel</button>
-                </span>
-              ) : (
-                <button
-                  onClick={() => setIgdbConfirming('sync')}
-                  disabled={igdbSyncing}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {igdbSyncing ? (
-                    <>
-                      <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                      </svg>
-                      Syncing…
-                    </>
-                  ) : 'Sync all'}
-                </button>
-              )}
 
-              <span className="text-border">|</span>
-
-              {/* Clear links */}
-              {igdbConfirming === 'clear' ? (
-                <span className="flex items-center gap-2 text-xs">
-                  <span className="text-foreground font-medium">Clear all links?</span>
-                  <button
-                    onClick={() => { setIgdbConfirming(null); clearAllIGDBLinks() }}
-                    className="text-destructive hover:text-destructive/80 underline underline-offset-2 cursor-pointer"
-                  >Confirm</button>
-                  <button
-                    onClick={() => setIgdbConfirming(null)}
-                    className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
-                  >Cancel</button>
-                </span>
-              ) : (
-                <button
-                  onClick={() => setIgdbConfirming('clear')}
-                  disabled={!igdbLinks || igdbLinks.size === 0}
-                  className="text-xs text-muted-foreground hover:text-destructive underline underline-offset-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  Clear links
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* TMDB sync banner */}
-        {isTMDB && (
-          <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/30 px-4 py-3">
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">TMDB</span> — poster art, community ratings and genres via The Movie Database.
-            </p>
-            <div className="flex items-center gap-3 shrink-0">
-              {tmdbConfirming === 'sync' ? (
-                <span className="flex items-center gap-2 text-xs">
-                  <span className="text-foreground font-medium">Sync with TMDB?</span>
-                  <button
-                    onClick={() => { setTmdbConfirming(null); runTMDBSync() }}
-                    className="text-rose-600 hover:text-rose-700 underline underline-offset-2 cursor-pointer"
-                  >Confirm</button>
-                  <button
-                    onClick={() => setTmdbConfirming(null)}
-                    className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
-                  >Cancel</button>
-                </span>
-              ) : (
-                <button
-                  onClick={() => setTmdbConfirming('sync')}
-                  disabled={tmdbSyncing}
-                  className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  {tmdbSyncing ? (
-                    <>
-                      <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-                      </svg>
-                      Syncing…
-                    </>
-                  ) : 'Sync all'}
-                </button>
-              )}
-
-              <span className="text-border">|</span>
-
-              {tmdbConfirming === 'clear' ? (
-                <span className="flex items-center gap-2 text-xs">
-                  <span className="text-foreground font-medium">Clear all links?</span>
-                  <button
-                    onClick={() => { setTmdbConfirming(null); clearAllTMDBLinks() }}
-                    className="text-destructive hover:text-destructive/80 underline underline-offset-2 cursor-pointer"
-                  >Confirm</button>
-                  <button
-                    onClick={() => setTmdbConfirming(null)}
-                    className="text-muted-foreground hover:text-foreground underline underline-offset-2 cursor-pointer"
-                  >Cancel</button>
-                </span>
-              ) : (
-                <button
-                  onClick={() => setTmdbConfirming('clear')}
-                  disabled={!tmdbLinks || tmdbLinks.size === 0}
-                  className="text-xs text-muted-foreground hover:text-destructive underline underline-offset-2 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
-                >
-                  Clear links
-                </button>
-              )}
-            </div>
-          </div>
-        )}
 
         {/* Controls */}
         <div className="flex flex-col gap-3 mb-6">
@@ -1581,6 +1472,7 @@ export default function CategoryPage() {
             <Suspense fallback={<div className="text-muted-foreground">Loading map…</div>}>
               <TravelMap
               items={level1Items}
+              locationsMap={travelLocations}
               flyTarget={flyTarget}
               visible={viewMode === 'map'}
               country={isHierarchical && hierarchyKey1 === 'country' ? activeGroup : undefined}
@@ -1623,7 +1515,7 @@ export default function CategoryPage() {
                 if (statusFilter !== 'all') {
                   const title = String(item.item_data.book_title ?? '')
                   const book  = hardcoverLibrary
-                    ? findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(item.id))
+                    ? findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(item.id)?.hardcoverBookId)
                     : undefined
                   if (statusFilter === 'untracked') return !book
                   if (!book) return false
@@ -1632,16 +1524,18 @@ export default function CategoryPage() {
                 return true
               })
               .map((item) => {
-                const title  = String(item.item_data.book_title ?? '')
-                const author = String(item.item_data.author ?? '')
-                const book   = hardcoverLibrary
-                  ? findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(item.id))
+                const title   = String(item.item_data.book_title ?? '')
+                const author  = String(item.item_data.author ?? '')
+                const hcLink  = hardcoverLinks?.get(item.id) as HardcoverLinkData | undefined
+                const book    = hardcoverLibrary
+                  ? findHardcoverBook(hardcoverLibrary, title, hcLink?.hardcoverBookId)
                   : undefined
                 return (
                   <BookCard
                     key={item.id}
                     item={item}
                     book={book}
+                    hcLink={hcLink}
                     isAdding={addingItemId === item.id}
                     isSearching={addingTitle === title}
                     isUpdatingStatus={book != null && updatingStatusId === book.userBookId}

@@ -10,6 +10,7 @@ import MapGL, {
 } from 'react-map-gl/mapbox'
 import type { FeatureCollection, Feature, Point } from 'geojson'
 import type { AnalysisItem } from '@/types'
+import type { TravelLocationsMap } from '@/hooks/useTravelLocations'
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN as string | undefined
 
@@ -104,10 +105,11 @@ export interface FlyTarget {
 }
 
 interface TravelMapProps {
-  items: AnalysisItem[]
-  flyTarget?: FlyTarget | null
-  visible?: boolean
-  country?: string
+  items:         AnalysisItem[]
+  locationsMap?: TravelLocationsMap | null
+  flyTarget?:    FlyTarget | null
+  visible?:      boolean
+  country?:      string
 }
 
 const MAP_STYLES = [
@@ -119,7 +121,13 @@ const MAP_STYLES = [
 
 type StyleId = typeof MAP_STYLES[number]['id']
 
-export default function TravelMap({ items, flyTarget, visible = true, country }: TravelMapProps) {
+export default function TravelMap({ items, locationsMap, flyTarget, visible = true, country }: TravelMapProps) {
+  /** Resolve locations for an item: prefer the dedicated table, fall back to legacy item_data._locations. */
+  const getItemLocs = useCallback((item: AnalysisItem) => {
+    if (locationsMap) return locationsMap.get(item.id) ?? []
+    // Legacy fallback
+    return (item.item_data._locations as { lat: number; lng: number; label: string; type: string }[] | undefined) ?? []
+  }, [locationsMap])
   const mapRef       = useRef<MapRef>(null)
   const flyTimer     = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hoveredIdRef = useRef<number | null>(null)   // track hovered feature for state cleanup
@@ -131,15 +139,13 @@ export default function TravelMap({ items, flyTarget, visible = true, country }:
 
   const activeStyle = MAP_STYLES.find((s) => s.id === styleId)!.url
 
-  // Helper — build all PinProperties for items whose _locations include (lat, lng)
+  // Helper — build all PinProperties for items whose locations include (lat, lng)
   const propsAtCoords = useCallback((lat: number, lng: number, preferItemId?: number): PinProperties[] => {
     const EPSILON = 0.0002
     const found: PinProperties[] = []
     for (const item of items) {
-      const locs = item.item_data._locations as
-        | { lat: number; lng: number; label: string; type: string }[]
-        | undefined
-      if (!locs) continue
+      const locs = getItemLocs(item)
+      if (!locs.length) continue
       const match = locs.find(
         (l) => Math.abs(l.lat - lat) < EPSILON && Math.abs(l.lng - lng) < EPSILON,
       )
@@ -163,7 +169,7 @@ export default function TravelMap({ items, flyTarget, visible = true, country }:
       found.sort((a, b) => (a.itemId === preferItemId ? -1 : b.itemId === preferItemId ? 1 : 0))
     }
     return found
-  }, [items])
+  }, [items, getItemLocs])
 
   // Resize canvas when map becomes visible (CSS hidden breaks Mapbox sizing)
   useEffect(() => {
@@ -187,8 +193,7 @@ export default function TravelMap({ items, flyTarget, visible = true, country }:
 
     const coords: [number, number][] = []
     for (const item of items) {
-      const locs = item.item_data._locations as { lat: number; lng: number }[] | undefined
-      if (!locs) continue
+      const locs = getItemLocs(item)
       for (const loc of locs) {
         if (loc.lat && loc.lng) coords.push([loc.lng, loc.lat])
       }
@@ -201,7 +206,7 @@ export default function TravelMap({ items, flyTarget, visible = true, country }:
       [[Math.min(...lngs), Math.min(...lats)], [Math.max(...lngs), Math.max(...lats)]],
       { padding: 60, maxZoom: 13, duration: 800 },
     )
-  }, [items, country, flyTarget, mapLoaded])
+  }, [items, country, flyTarget, mapLoaded, getItemLocs])
 
   // Fly to a specific pin from the table.
   // Uses a timeout instead of map.once('moveend') — moveend fires for ANY map
@@ -231,10 +236,8 @@ export default function TravelMap({ items, flyTarget, visible = true, country }:
   const geojson = useMemo<FeatureCollection<Point, PinProperties>>(() => {
     const features: Feature<Point, PinProperties>[] = []
     for (const item of items) {
-      const locs = item.item_data._locations as
-        | { lat: number; lng: number; label: string; type: string }[]
-        | undefined
-      if (!locs) continue
+      const locs = getItemLocs(item)
+      if (!locs.length) continue
 
       const d = item.item_data
       for (const loc of locs) {
@@ -258,7 +261,7 @@ export default function TravelMap({ items, flyTarget, visible = true, country }:
       }
     }
     return { type: 'FeatureCollection', features }
-  }, [items])
+  }, [items, getItemLocs])
 
   // Click on a cluster → zoom in
   const onClusterClick = useCallback((e: MapLayerMouseEvent) => {

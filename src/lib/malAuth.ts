@@ -24,7 +24,7 @@ function base64url(buf: ArrayBuffer): string {
 export async function generatePKCE(): Promise<{ verifier: string; challenge: string }> {
   // MAL uses plain PKCE — the challenge is the verifier itself (S256 is not supported)
   const bytes    = crypto.getRandomValues(new Uint8Array(64))
-  const verifier = base64url(bytes)
+  const verifier = base64url(bytes.buffer as ArrayBuffer)
   return { verifier, challenge: verifier }
 }
 

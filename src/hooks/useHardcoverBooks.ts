@@ -307,16 +307,33 @@ export function useAddBookByTitle() {
 
 // ── Hardcover links (analysis_item_id → hardcover_book_id) ───────────────────
 
-/** Returns a Map<analysisItemId, hardcoverBookId> for all stored links. */
+export interface HardcoverLinkData {
+  hardcoverBookId:    number
+  coverUrl:           string | null
+  hcCommunityRating:  number | null
+  genres:             string[]
+  releaseYear:        number | null
+}
+
+/** Returns a Map<analysisItemId, HardcoverLinkData> for all stored links. */
 export function useHardcoverLinks() {
   return useQuery({
     queryKey: ['hardcover-links'],
-    queryFn: async (): Promise<Map<number, number>> => {
+    queryFn: async (): Promise<Map<number, HardcoverLinkData>> => {
       const { data, error } = await supabase
         .from('hardcover_links')
-        .select('analysis_item_id, hardcover_book_id')
+        .select('analysis_item_id, hardcover_book_id, cover_url, hc_community_rating, genres, release_year')
       if (error) throw error
-      return new Map((data ?? []).map((r) => [r.analysis_item_id as number, r.hardcover_book_id as number]))
+      return new Map((data ?? []).map((r) => [
+        r.analysis_item_id as number,
+        {
+          hardcoverBookId:   r.hardcover_book_id      as number,
+          coverUrl:          r.cover_url              as string | null,
+          hcCommunityRating: r.hc_community_rating    as number | null,
+          genres:            (r.genres as string[] | null) ?? [],
+          releaseYear:       r.release_year           as number | null,
+        },
+      ]))
     },
     staleTime: 1000 * 60 * 10,
   })
@@ -337,7 +354,7 @@ export function useDeleteHardcoverLink() {
   })
 }
 
-/** Upserts an analysis_item_id → hardcover_book_id mapping. */
+/** Upserts an analysis_item_id → hardcover_book_id mapping, optionally with enrichment. */
 export function useUpsertHardcoverLink() {
   const qc = useQueryClient()
   return useMutation({
@@ -345,14 +362,30 @@ export function useUpsertHardcoverLink() {
       analysisItemId,
       hardcoverBookId,
       bookTitle,
+      coverUrl,
+      hcCommunityRating,
+      genres,
+      releaseYear,
     }: {
-      analysisItemId:  number
-      hardcoverBookId: number
-      bookTitle?:      string
+      analysisItemId:     number
+      hardcoverBookId:    number
+      bookTitle?:         string
+      coverUrl?:          string | null
+      hcCommunityRating?: number | null
+      genres?:            string[]
+      releaseYear?:       number | null
     }) => {
       const { error } = await supabase
         .from('hardcover_links')
-        .upsert({ analysis_item_id: analysisItemId, hardcover_book_id: hardcoverBookId, book_title: bookTitle ?? null })
+        .upsert({
+          analysis_item_id:    analysisItemId,
+          hardcover_book_id:   hardcoverBookId,
+          book_title:          bookTitle          ?? null,
+          cover_url:           coverUrl           ?? null,
+          hc_community_rating: hcCommunityRating  ?? null,
+          genres:              genres             ?? [],
+          release_year:        releaseYear        ?? null,
+        })
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-links'] }),

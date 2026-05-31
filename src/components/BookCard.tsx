@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronUp } from 'lucide-react'
 import { StarRating } from '@/components/StarRating'
-import { HARDCOVER_STATUS, type HardcoverBook } from '@/hooks/useHardcoverBooks'
+import { HARDCOVER_STATUS, type HardcoverBook, type HardcoverLinkData } from '@/hooks/useHardcoverBooks'
 import type { AnalysisItem } from '@/types'
 
 interface BookCardProps {
   item:              AnalysisItem
   book?:             HardcoverBook
+  hcLink?:           HardcoverLinkData  // enrichment: cover, community rating, genres
   isAdding:          boolean   // spinner while add+link mutations are in flight
   isSearching:       boolean   // searching… while modal opens
   isUpdatingStatus:  boolean   // pulse while status mutation is in flight
@@ -18,6 +19,7 @@ interface BookCardProps {
 export function BookCard({
   item,
   book,
+  hcLink,
   isAdding,
   isSearching,
   isUpdatingStatus,
@@ -36,6 +38,13 @@ export function BookCard({
   const addedDate  = item.item_data._first_added
     ? String(item.item_data._first_added).slice(0, 10)
     : item.created_at.slice(0, 10)
+
+  const coverUrl          = hcLink?.coverUrl ?? null
+  const communityRating   = hcLink?.hcCommunityRating ?? null
+  // Prefer genres from hcLink (Hardcover data); fall back to item_data genre string
+  const displayGenres     = hcLink?.genres?.length
+    ? hcLink.genres.slice(0, 3)
+    : genre ? [genre] : []
 
   const TRUNCATE_AT = 120
   const isTruncatable = whyReadIt.length > TRUNCATE_AT
@@ -58,7 +67,21 @@ export function BookCard({
     : 'bg-white border-border dark:bg-card'
 
   return (
-    <div className={`flex flex-col gap-3 rounded-xl border p-4 shadow-sm hover:shadow-md transition-shadow ${statusBg}`}>
+    <div className={`flex flex-col gap-3 rounded-xl border shadow-sm hover:shadow-md transition-shadow overflow-hidden ${statusBg}`}>
+
+      {/* Cover image (full-width banner if available) */}
+      {coverUrl && (
+        <div className="w-full aspect-[3/2] overflow-hidden bg-muted">
+          <img
+            src={coverUrl}
+            alt={title}
+            className="w-full h-full object-cover"
+            loading="lazy"
+          />
+        </div>
+      )}
+
+      <div className="flex flex-col gap-3 p-4 pt-3">
 
       {/* Title + date */}
       <div className="flex items-start justify-between gap-2">
@@ -66,15 +89,27 @@ export function BookCard({
         <span className="text-[11px] text-muted-foreground whitespace-nowrap shrink-0 mt-0.5">{addedDate}</span>
       </div>
 
-      {/* Author + genre */}
+      {/* Author + genre tags */}
       <div className="flex items-center gap-2 flex-wrap">
-        <span className="text-xs text-muted-foreground">{author}</span>
-        {genre && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
-            {genre}
+        {author && <span className="text-xs text-muted-foreground">{author}</span>}
+        {displayGenres.map((g) => (
+          <span key={g} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+            {g}
           </span>
-        )}
+        ))}
       </div>
+
+      {/* Community rating from Hardcover */}
+      {communityRating != null && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-muted-foreground">Community</span>
+          <span className="text-[11px] font-semibold text-foreground tabular-nums">
+            {communityRating.toFixed(1)}
+          </span>
+          <span className="text-[10px] text-yellow-500">★</span>
+          <span className="text-[10px] text-muted-foreground">/ 5</span>
+        </div>
+      )}
 
       {/* Hardcover row */}
       <div className="flex items-center gap-3 pt-0.5">
@@ -152,6 +187,8 @@ export function BookCard({
           </a>
         )}
       </div>
+
+      </div>{/* end padded content */}
     </div>
   )
 }
