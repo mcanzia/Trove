@@ -61,6 +61,7 @@ import {
   type MALSearchResult,
 } from '@/hooks/useMAL'
 import { useBGGLinks, type BGGLinkData } from '@/hooks/useBGGLinks'
+import { useInstagramStorefronts } from '@/hooks/useInstagramStorefronts'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
@@ -342,12 +343,14 @@ export default function CategoryPage() {
   const EXTERNAL_URL_RE = /https?:\/\/(?!(?:www\.)?(?:instagram\.com|reddit\.com|redd\.it))[^\s)"'<>]+/
 
   /** Resolve the best shop link for a product item. Priority:
-   *  1. Post URL if external (e.g. a Reddit link post to a product page)
+   *  1. Post URL if external (not Instagram/Reddit)
    *  2. First external URL found in the post caption
-   *  3. Amazon search (physical) or Google search (software/mixed)
+   *  3. Amazon storefront for the posting account (if verified)
+   *  4. Amazon search (physical) or Google search (software/mixed)
    */
   function getShopLink(item: AnalysisItem): { url: string; label: string } | null {
     if (!productConfig) return null
+
     // 1. External post URL
     const postUrl = item.posts?.url ?? ''
     if (postUrl && EXTERNAL_URL_RE.test(postUrl)) {
@@ -359,17 +362,25 @@ export default function CategoryPage() {
     if (captionMatch) {
       return { url: captionMatch[0], label: 'Link →' }
     }
-    // 3. Search fallback
+
     const productName = String(item.item_data[productConfig.nameField] ?? '').trim()
     if (!productName) return null
 
+    // 3. Amazon storefront for the posting account
+    const owner = item.posts?.owner ?? ''
+    const storefrontUrl = owner ? storefronts?.get(owner) : undefined
+    if (storefrontUrl) {
+      return { url: storefrontUrl, label: 'Storefront →' }
+    }
+
+    // 4. Search fallback
     if (productConfig.fallback === 'amazon') {
       return {
         url: `https://www.amazon.com/s?k=${encodeURIComponent(productName)}`,
         label: 'Amazon →',
       }
     }
-    // 'google' fallback: also check Tech type — skip Amazon for pure software
+    // 'google' fallback: check Tech type — skip Amazon for pure software
     const itemType = String(item.item_data.type ?? '').toLowerCase()
     const isSoftware = ['software', 'app', 'ai', 'platform', 'service', 'tool', 'extension', 'plugin'].some(t => itemType.includes(t))
     if (isSoftware) {
@@ -384,6 +395,7 @@ export default function CategoryPage() {
     }
   }
   const { data: bggLinks }          = useBGGLinks()
+  const { data: storefronts }       = useInstagramStorefronts()
   const { data: hardcoverLibrary }  = useHardcoverBooks()
   const { data: hardcoverLinks }    = useHardcoverLinks()
   const updateRating    = useUpdateHardcoverRating()
@@ -733,8 +745,8 @@ export default function CategoryPage() {
         cell: ({ row }) => {
           const shopLink = getShopLink(row.original)
           if (!shopLink) return <span className="text-muted-foreground text-xs">—</span>
-          // Indicate when it's a direct link vs a search fallback
-          const isDirect = shopLink.label === 'View →' || shopLink.label === 'Link →'
+          // Green for specific links; default for generic search fallbacks
+          const isDirect = shopLink.label === 'View →' || shopLink.label === 'Link →' || shopLink.label === 'Storefront →'
           return (
             <a
               href={shopLink.url}
@@ -1252,7 +1264,7 @@ export default function CategoryPage() {
       updateMALStatus, updateMALScore, searchMAL, deleteMALLink, items,
       igdbLinks, searchIGDB, deleteIGDBLink, updateIGDBScore,
       isTMDB, isMovies, tmdbLinks, deleteTMDBLink, updateTMDBScore,
-      productConfig, getShopLink])
+      productConfig, getShopLink, storefronts])
 
   // Flag lookup for the dropdown
   const getOptionLabel = (value: string) => {
