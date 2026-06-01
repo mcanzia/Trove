@@ -60,6 +60,7 @@ import {
   MAL_STATUS,
   type MALSearchResult,
 } from '@/hooks/useMAL'
+import { useBGGLinks, type BGGLinkData } from '@/hooks/useBGGLinks'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
@@ -327,6 +328,62 @@ export default function CategoryPage() {
   const isTVSeries    = categoryName === 'TV Series Recommendations'
   const isTMDB        = isMovies || isTVSeries
   const tmdbMediaType = isTVSeries ? 'tv' : 'movie'
+
+  // Product categories that get a Shop link column
+  const PRODUCT_CATEGORIES: Record<string, { nameField: string; fallback: 'amazon' | 'google' }> = {
+    'Home & Kitchen Products':   { nameField: 'product_name',    fallback: 'amazon' },
+    'Skincare & Acne Treatment': { nameField: 'product_routine', fallback: 'amazon' },
+    'Fashion & Beauty':          { nameField: 'product_routine', fallback: 'amazon' },
+    'Tech & Gadgets':            { nameField: 'name',            fallback: 'google' },
+  }
+  const productConfig = PRODUCT_CATEGORIES[categoryName] ?? null
+
+  // Non-social-media URL regex (strips Instagram/Reddit/Redd.it)
+  const EXTERNAL_URL_RE = /https?:\/\/(?!(?:www\.)?(?:instagram\.com|reddit\.com|redd\.it))[^\s)"'<>]+/
+
+  /** Resolve the best shop link for a product item. Priority:
+   *  1. Post URL if external (e.g. a Reddit link post to a product page)
+   *  2. First external URL found in the post caption
+   *  3. Amazon search (physical) or Google search (software/mixed)
+   */
+  function getShopLink(item: AnalysisItem): { url: string; label: string } | null {
+    if (!productConfig) return null
+    // 1. External post URL
+    const postUrl = item.posts?.url ?? ''
+    if (postUrl && EXTERNAL_URL_RE.test(postUrl)) {
+      return { url: postUrl, label: 'View →' }
+    }
+    // 2. URL in caption
+    const caption = item.posts?.caption ?? ''
+    const captionMatch = caption.match(EXTERNAL_URL_RE)
+    if (captionMatch) {
+      return { url: captionMatch[0], label: 'Link →' }
+    }
+    // 3. Search fallback
+    const productName = String(item.item_data[productConfig.nameField] ?? '').trim()
+    if (!productName) return null
+
+    if (productConfig.fallback === 'amazon') {
+      return {
+        url: `https://www.amazon.com/s?k=${encodeURIComponent(productName)}`,
+        label: 'Amazon →',
+      }
+    }
+    // 'google' fallback: also check Tech type — skip Amazon for pure software
+    const itemType = String(item.item_data.type ?? '').toLowerCase()
+    const isSoftware = ['software', 'app', 'ai', 'platform', 'service', 'tool', 'extension', 'plugin'].some(t => itemType.includes(t))
+    if (isSoftware) {
+      return {
+        url: `https://www.google.com/search?q=${encodeURIComponent(productName)}`,
+        label: 'Search →',
+      }
+    }
+    return {
+      url: `https://www.amazon.com/s?k=${encodeURIComponent(productName)}`,
+      label: 'Amazon →',
+    }
+  }
+  const { data: bggLinks }          = useBGGLinks()
   const { data: hardcoverLibrary }  = useHardcoverBooks()
   const { data: hardcoverLinks }    = useHardcoverLinks()
   const updateRating    = useUpdateHardcoverRating()
@@ -599,22 +656,94 @@ export default function CategoryPage() {
     const base = buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick, travelLocations)
 
     if (isBoardGames) {
+      // Cover art column
+      base.unshift({
+        id: '_bgg_cover',
+        header: '',
+        accessorFn: (row) => bggLinks?.get(row.id)?.coverUrl ?? null,
+        cell: ({ row }) => {
+          const link = bggLinks?.get(row.original.id)
+          const coverUrl = link?.coverUrl ?? link?.thumbnailUrl ?? null
+          return (
+            <div className="w-10 h-14 rounded overflow-hidden bg-muted flex-shrink-0">
+              {coverUrl
+                ? <img src={coverUrl} alt="" className="w-full h-full object-cover" loading="lazy" />
+                : <div className="w-full h-full bg-muted" />
+              }
+            </div>
+          )
+        },
+        enableSorting: false,
+      } satisfies ColumnDef<AnalysisItem, unknown>)
+
+      // BGG rating column
       base.push({
-        id: '_bgg',
+        id: '_bgg_rating',
+        header: 'BGG ★',
+        accessorFn: (row) => bggLinks?.get(row.id)?.bggRating ?? null,
+        cell: ({ row }) => {
+          const link = bggLinks?.get(row.original.id)
+          if (!link) return <span className="text-muted-foreground text-xs">—</span>
+          return (
+            <div className="flex flex-col gap-0.5">
+              {link.bggRating != null && (
+                <span className="text-xs font-semibold tabular-nums">
+                  {link.bggRating.toFixed(1)}
+                  <span className="text-[10px] text-muted-foreground font-normal"> /10</span>
+                </span>
+              )}
+              {link.bggWeight != null && (
+                <span className="text-[10px] text-muted-foreground tabular-nums">
+                  W {link.bggWeight.toFixed(1)}/5
+                </span>
+              )}
+            </div>
+          )
+        },
+        enableSorting: true,
+      } satisfies ColumnDef<AnalysisItem, unknown>)
+
+      // BGG link column (now points to the actual game page when we have an ID)
+      base.push({
+        id: '_bgg_link',
         header: 'BGG',
-        accessorFn: (row) => String(row.item_data.game_name ?? ''),
-        cell: ({ getValue }) => {
-          const name = getValue() as string
-          if (!name) return <span className="text-muted-foreground text-xs">—</span>
-          const url = `https://boardgamegeek.com/geeksearch.php?action=search&q=${encodeURIComponent(name)}&objecttype=boardgame`
+        accessorFn: (row) => bggLinks?.get(row.id)?.bggGameId ?? null,
+        cell: ({ row }) => {
+          const link  = bggLinks?.get(row.original.id)
+          const name  = String(row.original.item_data.game_name ?? '')
+          const url   = link?.bggGameId
+            ? `https://boardgamegeek.com/boardgame/${link.bggGameId}`
+            : `https://boardgamegeek.com/geeksearch.php?action=search&q=${encodeURIComponent(name)}&objecttype=boardgame`
+          return (
+            <a href={url} target="_blank" rel="noopener noreferrer"
+              className="text-xs text-primary hover:underline whitespace-nowrap">
+              BGG →
+            </a>
+          )
+        },
+        enableSorting: false,
+      } satisfies ColumnDef<AnalysisItem, unknown>)
+    }
+
+    if (productConfig) {
+      base.push({
+        id: '_shop',
+        header: 'Shop',
+        accessorFn: (row) => String(row.item_data[productConfig.nameField] ?? ''),
+        cell: ({ row }) => {
+          const shopLink = getShopLink(row.original)
+          if (!shopLink) return <span className="text-muted-foreground text-xs">—</span>
+          // Indicate when it's a direct link vs a search fallback
+          const isDirect = shopLink.label === 'View →' || shopLink.label === 'Link →'
           return (
             <a
-              href={url}
+              href={shopLink.url}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-xs text-primary hover:underline whitespace-nowrap"
+              className={`text-xs hover:underline whitespace-nowrap ${isDirect ? 'text-green-600 dark:text-green-400' : 'text-primary'}`}
+              title={isDirect ? 'Direct link from source post' : undefined}
             >
-              BGG →
+              {shopLink.label}
             </a>
           )
         },
@@ -1118,11 +1247,12 @@ export default function CategoryPage() {
 
     return base
   }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations,
-      isBoardGames, isMtg, isAnime,
+      isBoardGames, bggLinks, isMtg, isAnime,
       isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
       updateMALStatus, updateMALScore, searchMAL, deleteMALLink, items,
       igdbLinks, searchIGDB, deleteIGDBLink, updateIGDBScore,
-      isTMDB, isMovies, tmdbLinks, deleteTMDBLink, updateTMDBScore])
+      isTMDB, isMovies, tmdbLinks, deleteTMDBLink, updateTMDBScore,
+      productConfig, getShopLink])
 
   // Flag lookup for the dropdown
   const getOptionLabel = (value: string) => {

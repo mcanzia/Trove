@@ -49,6 +49,10 @@ export interface AnalysisItem {
     url: string | null
     year: string | null
     timestamp: string | null
+    caption: string | null
+    owner: string | null
+    owner_fullname: string | null
+    platform: Platform | null
   } | null
 }
 

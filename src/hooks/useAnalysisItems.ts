@@ -13,7 +13,7 @@ export function useAnalysisItems({ categoryName, platform }: UseAnalysisItemsOpt
     queryFn: async () => {
       let query = supabase
         .from('analysis_items')
-        .select('*, posts(url, year, timestamp)')
+        .select('*, posts(url, year, timestamp, caption, owner, owner_fullname, platform)')
         .eq('category_name', categoryName)
         .order('created_at', { ascending: false })
 
