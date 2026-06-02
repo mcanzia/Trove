@@ -16,7 +16,6 @@ import {
   useHardcoverBooks,
   useHardcoverLinks,
   useUpsertHardcoverLink,
-  useDeleteHardcoverLink,
   useUpdateHardcoverRating,
   useUpdateHardcoverStatus,
   useSearchHardcoverBook,
@@ -60,7 +59,8 @@ import {
   MAL_STATUS,
   type MALSearchResult,
 } from '@/hooks/useMAL'
-import { useBGGLinks, type BGGLinkData } from '@/hooks/useBGGLinks'
+import { useBGGLinks } from '@/hooks/useBGGLinks'
+import { useRecipeCards } from '@/hooks/useRecipeCards'
 import { useInstagramStorefronts } from '@/hooks/useInstagramStorefronts'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
@@ -325,6 +325,7 @@ export default function CategoryPage() {
   const isBoardGames  = categoryName === 'Board Games'
   const isAnime       = categoryName === 'Anime & Manga'
   const isVideoGames  = categoryName === 'Video Game Recommendations'
+  const isFood        = categoryName === 'Food & Cooking'
   const isMovies      = categoryName === 'Movies & Film Recommendations'
   const isTVSeries    = categoryName === 'TV Series Recommendations'
   const isTMDB        = isMovies || isTVSeries
@@ -395,6 +396,7 @@ export default function CategoryPage() {
     }
   }
   const { data: bggLinks }          = useBGGLinks()
+  const { data: recipeCards }       = useRecipeCards()
   const { data: storefronts }       = useInstagramStorefronts()
   const { data: hardcoverLibrary }  = useHardcoverBooks()
   const { data: hardcoverLinks }    = useHardcoverLinks()
@@ -403,7 +405,6 @@ export default function CategoryPage() {
   const searchBook      = useSearchHardcoverBook()
   const addBook         = useAddBookByTitle()
   const upsertLink      = useUpsertHardcoverLink()
-  const deleteLink      = useDeleteHardcoverLink()
 
   // NOTE: Stale link cleanup removed — hardcover_links now stores backend-synced
   // enrichment (cover art, rating, genres) for all books, not just personally-tracked
@@ -757,6 +758,27 @@ export default function CategoryPage() {
             >
               {shopLink.label}
             </a>
+          )
+        },
+        enableSorting: false,
+      } satisfies ColumnDef<AnalysisItem, unknown>)
+    }
+
+    if (isFood) {
+      base.push({
+        id: '_recipe',
+        header: 'Recipe',
+        accessorFn: (row) => (recipeCards?.has(row.id) ? 1 : 0),
+        cell: ({ row }) => {
+          const has = recipeCards?.has(row.original.id)
+          if (!has) return <span className="text-muted-foreground text-xs">—</span>
+          return (
+            <Link
+              to={`/category/${slug}/recipe/${row.original.id}`}
+              className="text-xs text-primary hover:underline whitespace-nowrap"
+            >
+              Recipe →
+            </Link>
           )
         },
         enableSorting: false,
@@ -1259,7 +1281,7 @@ export default function CategoryPage() {
 
     return base
   }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations,
-      isBoardGames, bggLinks, isMtg, isAnime,
+      isBoardGames, bggLinks, isMtg, isAnime, isFood, recipeCards, slug,
       isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
       updateMALStatus, updateMALScore, searchMAL, deleteMALLink, items,
       igdbLinks, searchIGDB, deleteIGDBLink, updateIGDBScore,
