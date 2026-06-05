@@ -3,6 +3,8 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { env } from './lib/env.js'
 import { recipes } from './routes/recipes.js'
+import { categories } from './routes/categories.js'
+import { analysisItems } from './routes/analysisItems.js'
 
 export const app = new Hono()
 
@@ -19,7 +21,10 @@ app.use(
 app.get('/health', (c) => c.json({ ok: true, service: 'trove-backend' }))
 
 // Mounting routes on a const chain keeps the inferred type intact for Hono RPC.
-const routes = app.route('/api/recipes', recipes)
+const routes = app
+  .route('/api/recipes', recipes)
+  .route('/api/categories', categories)
+  .route('/api/analysis-items', analysisItems)
 
 // Export the app's type so the Trove frontend can later use Hono's typed
 // client:  const client = hc<AppType>(API_URL)  → fully typed requests.

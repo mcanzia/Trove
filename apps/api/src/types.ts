@@ -5,6 +5,8 @@
 export type {
   Platform,
   PostRef,
+  Category,
+  OutputField,
   AnalysisItem,
   RecipeCard,
   RecipeResponse,

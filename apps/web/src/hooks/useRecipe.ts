@@ -11,15 +11,8 @@
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { hc } from 'hono/client'
-import type { AppType } from '@trove/api'
+import { api } from '@/lib/api'
 import type { RecipeResponse } from '@trove/shared'
-
-const API_URL =
-  ((import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8787')
-    .replace(/\/$/, '')
-
-const client = hc<AppType>(API_URL)
 
 export type { RecipeResponse }
 
@@ -29,7 +22,7 @@ export function useRecipe(postId: string | null) {
     queryKey: ['recipe', postId],
     enabled: !!postId,
     queryFn: async () => {
-      const res = await client.api.recipes[':postId'].$get({
+      const res = await api.api.recipes[':postId'].$get({
         param: { postId: postId as string },
       })
       if (res.status === 404) return null
