@@ -1,22 +1,22 @@
 /**
  * Reads pre-verified Amazon storefront URLs for Instagram accounts
- * that post product content. Populated by the Python sync script.
+ * that post product content. Served by @trove/api
+ * (GET /api/enrichments/instagram-storefronts).
  *
  * Returns a Map<instagramOwner, storefrontUrl>.
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
 
 export function useInstagramStorefronts() {
   return useQuery({
     queryKey: ['instagram-storefronts'],
     queryFn: async (): Promise<Map<string, string>> => {
-      const { data, error } = await supabase
-        .from('instagram_storefronts')
-        .select('owner, storefront_url')
-      if (error) throw error
-      return new Map((data ?? []).map((r) => [r.owner as string, r.storefront_url as string]))
+      const res = await api.api.enrichments['instagram-storefronts'].$get()
+      if (!res.ok) throw new Error(`Failed to load storefronts (${res.status})`)
+      const rows = await res.json()
+      return new Map(rows.map(({ owner, storefrontUrl }) => [owner, storefrontUrl]))
     },
     staleTime: 1000 * 60 * 60, // 1 hour — storefronts don't change often
   })

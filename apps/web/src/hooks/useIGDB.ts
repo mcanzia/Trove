@@ -11,6 +11,8 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
+import type { IGDBLink } from '@trove/shared'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -25,17 +27,7 @@ export interface IGDBGame {
   summary?:    string | null
 }
 
-export interface IGDBLink {
-  igdbGameId:    number
-  igdbTitle:     string | null
-  personalScore: number | null  // 1–10, null = unrated
-  // Cached game metadata — populated on link, no extra API call needed
-  coverUrl:      string | null
-  igdbRating:    number | null
-  genres:        string[]
-  platforms:     string[]
-  releaseYear:   number | null
-}
+export type { IGDBLink }
 
 // ── Proxy helper ──────────────────────────────────────────────────────────────
 
@@ -62,23 +54,10 @@ export function useIGDBLinks() {
   return useQuery({
     queryKey: ['igdb-links'],
     queryFn:  async (): Promise<Map<number, IGDBLink>> => {
-      const { data, error } = await supabase
-        .from('igdb_links')
-        .select('analysis_item_id, igdb_game_id, game_title, personal_score, cover_url, igdb_rating, genres, platforms, release_year')
-      if (error) throw error
-      return new Map((data ?? []).map((r) => [
-        r.analysis_item_id as number,
-        {
-          igdbGameId:    r.igdb_game_id    as number,
-          igdbTitle:     r.game_title      as string | null,
-          personalScore: r.personal_score  as number | null,
-          coverUrl:      r.cover_url       as string | null,
-          igdbRating:    r.igdb_rating     as number | null,
-          genres:        (r.genres         as string[] | null) ?? [],
-          platforms:     (r.platforms      as string[] | null) ?? [],
-          releaseYear:   r.release_year    as number | null,
-        },
-      ]))
+      const res = await api.api.enrichments.igdb.$get()
+      if (!res.ok) throw new Error(`Failed to load IGDB links (${res.status})`)
+      const rows = await res.json()
+      return new Map(rows.map(({ analysisItemId, ...data }) => [analysisItemId, data]))
     },
     staleTime: 1000 * 60 * 10,
   })

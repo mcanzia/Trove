@@ -10,6 +10,8 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
+import type { TMDBLink } from '@trove/shared'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,16 +25,7 @@ export interface TMDBTitle {
   mediaType:   'movie' | 'tv'
 }
 
-export interface TMDBLink {
-  tmdbId:        number
-  tmdbTitle:     string | null
-  mediaType:     'movie' | 'tv'
-  personalScore: number | null   // 1–10, null = unrated
-  posterUrl:     string | null
-  tmdbRating:    number | null
-  genres:        string[]
-  releaseYear:   number | null
-}
+export type { TMDBLink }
 
 // ── Proxy helper ──────────────────────────────────────────────────────────────
 
@@ -65,23 +58,10 @@ export function useTMDBLinks() {
   return useQuery({
     queryKey: ['tmdb-links'],
     queryFn:  async (): Promise<Map<number, TMDBLink>> => {
-      const { data, error } = await supabase
-        .from('tmdb_links')
-        .select('analysis_item_id, tmdb_id, media_type, tmdb_title, personal_score, poster_url, tmdb_rating, genres, release_year')
-      if (error) throw error
-      return new Map((data ?? []).map((r) => [
-        r.analysis_item_id as number,
-        {
-          tmdbId:        r.tmdb_id        as number,
-          tmdbTitle:     r.tmdb_title     as string | null,
-          mediaType:     r.media_type     as 'movie' | 'tv',
-          personalScore: r.personal_score as number | null,
-          posterUrl:     r.poster_url     as string | null,
-          tmdbRating:    r.tmdb_rating    as number | null,
-          genres:        (r.genres        as string[] | null) ?? [],
-          releaseYear:   r.release_year   as number | null,
-        },
-      ]))
+      const res = await api.api.enrichments.tmdb.$get()
+      if (!res.ok) throw new Error(`Failed to load TMDB links (${res.status})`)
+      const rows = await res.json()
+      return new Map(rows.map(({ analysisItemId, ...data }) => [analysisItemId, data]))
     },
     staleTime: 1000 * 60 * 10,
   })
