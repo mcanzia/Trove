@@ -9,7 +9,7 @@ export default function App() {
     <Routes>
       <Route path="/" element={<HomePage />} />
       <Route path="/category/:slug" element={<CategoryPage />} />
-      <Route path="/category/:slug/recipe/:itemId" element={<RecipePage />} />
+      <Route path="/category/:slug/recipe/:postId" element={<RecipePage />} />
       <Route path="/mal-callback" element={<MalCallback />} />
     </Routes>
   )

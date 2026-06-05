@@ -1,8 +1,10 @@
 /**
  * Recipe-card enrichment for Food & Cooking.
  *
- * Reads from `recipe_cards`, populated by the Python enrichment script
- * (db/enrich_recipe_cards.py). Keyed by analysis_item_id. No auth required.
+ * Reads from `recipe_cards`, populated by the Python enrichment scripts
+ * (db/scrape_external_recipes.py + db/enrich_recipe_cards.py). Keyed by
+ * source_post_id (the original post ID) so cards survive Food re-analysis —
+ * analysis_item IDs churn, the source post never does. No auth required.
  */
 
 import { useQuery } from '@tanstack/react-query'
@@ -24,17 +26,17 @@ export interface RecipeCardData {
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
-/** Returns a Map<analysisItemId, RecipeCardData> for all stored recipe cards. */
+/** Returns a Map<sourcePostId, RecipeCardData> for all stored recipe cards. */
 export function useRecipeCards() {
   return useQuery({
     queryKey: ['recipe-cards'],
-    queryFn: async (): Promise<Map<number, RecipeCardData>> => {
+    queryFn: async (): Promise<Map<string, RecipeCardData>> => {
       const { data, error } = await supabase
         .from('recipe_cards')
-        .select('analysis_item_id, ingredients, steps, prep_time, cook_time, total_time, servings, notes, source_excerpt, enriched_by')
+        .select('source_post_id, ingredients, steps, prep_time, cook_time, total_time, servings, notes, source_excerpt, enriched_by')
       if (error) throw error
       return new Map((data ?? []).map((r) => [
-        r.analysis_item_id as number,
+        r.source_post_id as string,
         {
           ingredients:   (r.ingredients as string[] | null) ?? [],
           steps:         (r.steps       as string[] | null) ?? [],

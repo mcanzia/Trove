@@ -768,13 +768,14 @@ export default function CategoryPage() {
       base.push({
         id: '_recipe',
         header: 'Recipe',
-        accessorFn: (row) => (recipeCards?.has(row.id) ? 1 : 0),
+        accessorFn: (row) => (row.source_post_id && recipeCards?.has(row.source_post_id) ? 1 : 0),
         cell: ({ row }) => {
-          const has = recipeCards?.has(row.original.id)
+          const postId = row.original.source_post_id
+          const has = postId != null && recipeCards?.has(postId)
           if (!has) return <span className="text-muted-foreground text-xs">—</span>
           return (
             <Link
-              to={`/category/${slug}/recipe/${row.original.id}`}
+              to={`/category/${slug}/recipe/${encodeURIComponent(postId)}`}
               className="text-xs text-primary hover:underline whitespace-nowrap"
             >
               Recipe →

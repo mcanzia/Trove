@@ -7,17 +7,22 @@ import type { AnalysisItem } from '@/types'
 
 // ── single-item fetch ──────────────────────────────────────────────────────────
 
-function useAnalysisItem(itemId: number | null) {
+// Recipes are addressed by source_post_id (stable across re-analysis), so look
+// up the Food & Cooking analysis_item that belongs to that post.
+function useFoodItemByPost(postId: string | null) {
   return useQuery<AnalysisItem | null>({
-    queryKey: ['analysis_item', itemId],
-    enabled: itemId != null && !Number.isNaN(itemId),
+    queryKey: ['food_item_by_post', postId],
+    enabled: !!postId,
     queryFn: async () => {
       const { data, error } = await supabase
         .from('analysis_items')
         .select('*, posts(url, year, timestamp, caption, owner, owner_fullname, platform)')
-        .eq('id', itemId)
-        .single()
+        .eq('category_name', 'Food & Cooking')
+        .eq('source_post_id', postId)
+        .limit(1)
+        .maybeSingle()
       if (error) throw error
+      if (!data) return null
       const item = data as AnalysisItem
       return {
         ...item,
@@ -52,12 +57,12 @@ function Chip({ icon, label, value }: { icon: React.ReactNode; label: string; va
 // ── page ─────────────────────────────────────────────────────────────────────────
 
 export default function RecipePage() {
-  const { slug, itemId } = useParams<{ slug: string; itemId: string }>()
-  const id = itemId ? parseInt(itemId, 10) : null
+  const { slug, postId } = useParams<{ slug: string; postId: string }>()
+  const sourcePostId = postId ? decodeURIComponent(postId) : null
 
-  const { data: item, isLoading, error } = useAnalysisItem(id)
+  const { data: item, isLoading, error } = useFoodItemByPost(sourcePostId)
   const { data: recipeCards } = useRecipeCards()
-  const card = id != null ? recipeCards?.get(id) : undefined
+  const card = sourcePostId != null ? recipeCards?.get(sourcePostId) : undefined
 
   const backHref = slug ? `/category/${slug}` : '/'
 
