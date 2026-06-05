@@ -1,38 +1,6 @@
 import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
 import { ChefHat, Clock, Users, UtensilsCrossed, ListChecks } from 'lucide-react'
-import { supabase } from '@/lib/supabase'
-import { useRecipeCards } from '@/hooks/useRecipeCards'
-import type { AnalysisItem } from '@/types'
-
-// ── single-item fetch ──────────────────────────────────────────────────────────
-
-// Recipes are addressed by source_post_id (stable across re-analysis), so look
-// up the Food & Cooking analysis_item that belongs to that post.
-function useFoodItemByPost(postId: string | null) {
-  return useQuery<AnalysisItem | null>({
-    queryKey: ['food_item_by_post', postId],
-    enabled: !!postId,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('analysis_items')
-        .select('*, posts(url, year, timestamp, caption, owner, owner_fullname, platform)')
-        .eq('category_name', 'Food & Cooking')
-        .eq('source_post_id', postId)
-        .limit(1)
-        .maybeSingle()
-      if (error) throw error
-      if (!data) return null
-      const item = data as AnalysisItem
-      return {
-        ...item,
-        item_data: typeof item.item_data === 'string'
-          ? JSON.parse(item.item_data)
-          : item.item_data,
-      }
-    },
-  })
-}
+import { useRecipe } from '@/hooks/useRecipe'
 
 // ── helpers ─────────────────────────────────────────────────────────────────────
 
@@ -60,9 +28,9 @@ export default function RecipePage() {
   const { slug, postId } = useParams<{ slug: string; postId: string }>()
   const sourcePostId = postId ? decodeURIComponent(postId) : null
 
-  const { data: item, isLoading, error } = useFoodItemByPost(sourcePostId)
-  const { data: recipeCards } = useRecipeCards()
-  const card = sourcePostId != null ? recipeCards?.get(sourcePostId) : undefined
+  const { data: recipe, isLoading, error } = useRecipe(sourcePostId)
+  const item = recipe?.item ?? null
+  const card = recipe?.card ?? undefined
 
   const backHref = slug ? `/category/${slug}` : '/'
 
