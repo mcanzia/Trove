@@ -1,3 +1,11 @@
+/**
+ * @trove/shared — domain types shared by the web app and the API.
+ *
+ * Single source of truth: previously duplicated between
+ * Trove/src/types/index.ts and Trove-Backend/src/types.ts ("kept in sync by
+ * hand"). Both packages now re-export from here.
+ */
+
 export type Platform = 'reddit' | 'instagram'
 
 export interface Post {
@@ -38,6 +46,17 @@ export interface Category {
   created_at: string
 }
 
+/** The subset of a post joined onto an analysis item. */
+export interface PostRef {
+  url: string | null
+  year: string | null
+  timestamp: string | null
+  caption: string | null
+  owner: string | null
+  owner_fullname: string | null
+  platform: Platform | null
+}
+
 export interface AnalysisItem {
   id: number
   category_name: string
@@ -45,15 +64,7 @@ export interface AnalysisItem {
   item_data: Record<string, unknown>
   source_post_id: string | null
   created_at: string
-  posts: {
-    url: string | null
-    year: string | null
-    timestamp: string | null
-    caption: string | null
-    owner: string | null
-    owner_fullname: string | null
-    platform: Platform | null
-  } | null
+  posts: PostRef | null
 }
 
 export interface AnalysisMetadata {
@@ -61,4 +72,26 @@ export interface AnalysisMetadata {
   platform: Platform
   post_count: number | null
   analyzed_at: string
+}
+
+/** Camel-cased recipe card (matches the recipe_cards table, mapped). */
+export interface RecipeCard {
+  ingredients: string[]
+  steps: string[]
+  prepTime: string | null
+  cookTime: string | null
+  totalTime: string | null
+  servings: string | null
+  notes: string | null
+  sourceExcerpt: string | null
+  enrichedBy: string | null
+}
+
+/** Back-compat alias for the frontend's original name. */
+export type RecipeCardData = RecipeCard
+
+/** Response payload for GET /api/recipes/:postId */
+export interface RecipeResponse {
+  item: AnalysisItem
+  card: RecipeCard | null
 }

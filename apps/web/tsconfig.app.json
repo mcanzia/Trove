@@ -26,5 +26,8 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
+  "references": [
+    { "path": "../api" }
+  ],
   "include": ["src"]
 }
