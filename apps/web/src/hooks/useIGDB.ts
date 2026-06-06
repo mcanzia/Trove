@@ -85,19 +85,11 @@ export function useUpsertIGDBLink() {
       platforms?:     string[]
       releaseYear?:   number | null
     }) => {
-      const { error } = await supabase
-        .from('igdb_links')
-        .upsert({
-          analysis_item_id: analysisItemId,
-          igdb_game_id:     igdbGameId,
-          game_title:       gameTitle   ?? null,
-          cover_url:        coverUrl    ?? null,
-          igdb_rating:      igdbRating  ?? null,
-          genres:           genres      ?? [],
-          platforms:        platforms   ?? [],
-          release_year:     releaseYear ?? null,
-        })
-      if (error) throw error
+      const res = await api.api.enrichments.igdb[':analysisItemId'].$put({
+        param: { analysisItemId: String(analysisItemId) },
+        json: { igdbGameId, gameTitle, coverUrl, igdbRating, genres, platforms, releaseYear },
+      })
+      if (!res.ok) throw new Error(`Failed to save IGDB link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['igdb-links'] }),
   })
@@ -107,11 +99,10 @@ export function useDeleteIGDBLink() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (analysisItemId: number) => {
-      const { error } = await supabase
-        .from('igdb_links')
-        .delete()
-        .eq('analysis_item_id', analysisItemId)
-      if (error) throw error
+      const res = await api.api.enrichments.igdb[':analysisItemId'].$delete({
+        param: { analysisItemId: String(analysisItemId) },
+      })
+      if (!res.ok) throw new Error(`Failed to delete IGDB link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['igdb-links'] }),
   })
@@ -127,11 +118,11 @@ export function useUpdateIGDBScore() {
       analysisItemId: number
       personalScore:  number | null
     }) => {
-      const { error } = await supabase
-        .from('igdb_links')
-        .update({ personal_score: personalScore })
-        .eq('analysis_item_id', analysisItemId)
-      if (error) throw error
+      const res = await api.api.enrichments.igdb[':analysisItemId'].score.$patch({
+        param: { analysisItemId: String(analysisItemId) },
+        json: { personalScore },
+      })
+      if (!res.ok) throw new Error(`Failed to update IGDB score (${res.status})`)
     },
     onMutate: async ({ analysisItemId, personalScore }) => {
       await qc.cancelQueries({ queryKey: ['igdb-links'] })

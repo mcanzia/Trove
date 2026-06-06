@@ -89,19 +89,11 @@ export function useUpsertTMDBLink() {
       genres?:        string[]
       releaseYear?:   number | null
     }) => {
-      const { error } = await supabase
-        .from('tmdb_links')
-        .upsert({
-          analysis_item_id: analysisItemId,
-          tmdb_id:          tmdbId,
-          media_type:       mediaType,
-          tmdb_title:       tmdbTitle   ?? null,
-          poster_url:       posterUrl   ?? null,
-          tmdb_rating:      tmdbRating  ?? null,
-          genres:           genres      ?? [],
-          release_year:     releaseYear ?? null,
-        })
-      if (error) throw error
+      const res = await api.api.enrichments.tmdb[':analysisItemId'].$put({
+        param: { analysisItemId: String(analysisItemId) },
+        json: { tmdbId, mediaType, tmdbTitle, posterUrl, tmdbRating, genres, releaseYear },
+      })
+      if (!res.ok) throw new Error(`Failed to save TMDB link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tmdb-links'] }),
   })
@@ -111,11 +103,10 @@ export function useDeleteTMDBLink() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (analysisItemId: number) => {
-      const { error } = await supabase
-        .from('tmdb_links')
-        .delete()
-        .eq('analysis_item_id', analysisItemId)
-      if (error) throw error
+      const res = await api.api.enrichments.tmdb[':analysisItemId'].$delete({
+        param: { analysisItemId: String(analysisItemId) },
+      })
+      if (!res.ok) throw new Error(`Failed to delete TMDB link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tmdb-links'] }),
   })
@@ -131,11 +122,11 @@ export function useUpdateTMDBScore() {
       analysisItemId: number
       personalScore:  number | null
     }) => {
-      const { error } = await supabase
-        .from('tmdb_links')
-        .update({ personal_score: personalScore })
-        .eq('analysis_item_id', analysisItemId)
-      if (error) throw error
+      const res = await api.api.enrichments.tmdb[':analysisItemId'].score.$patch({
+        param: { analysisItemId: String(analysisItemId) },
+        json: { personalScore },
+      })
+      if (!res.ok) throw new Error(`Failed to update TMDB score (${res.status})`)
     },
     onMutate: async ({ analysisItemId, personalScore }) => {
       await qc.cancelQueries({ queryKey: ['tmdb-links'] })

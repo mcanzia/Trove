@@ -14,27 +14,61 @@ server-side instead of in the browser.
 
 ## Setup
 
+From the monorepo root (`pnpm install` once), then:
+
 ```bash
-npm install
-cp .env.example .env   # fill in SUPABASE_URL + SUPABASE_ANON_KEY (same project as Trove)
-npm run dev            # http://localhost:8787
+cp apps/api/.env.example apps/api/.env   # fill in SUPABASE_URL + both keys
+pnpm dev:api                             # http://localhost:8787
 ```
 
-## Scripts
-
-| Script              | Description                          |
-| ------------------- | ------------------------------------ |
-| `npm run dev`       | Watch-mode dev server (tsx)          |
-| `npm run build`     | Type-check + emit to `dist/`         |
-| `npm run start`     | Run the built server                 |
-| `npm run typecheck` | Type-check only, no emit             |
+`SUPABASE_SERVICE_ROLE_KEY` is **required for the write endpoints** (enrichment
+upsert/delete/score). Reads work with just the anon key; writes return `500`
+("service-role not configured") until it's set.
 
 ## Endpoints
 
-| Method | Path                     | Description                                                              |
-| ------ | ------------------------ | ------------------------------------------------------------------------ |
-| GET    | `/health`                | Liveness probe.                                                          |
-| GET    | `/api/recipes/:postId`   | Food & Cooking item + its structured recipe card, by `source_post_id`.   |
+### Reads (anon key)
+
+| Method | Path                                       | Description                                              |
+| ------ | ------------------------------------------ | ------------------------------------------------------- |
+| GET    | `/health`                                  | Liveness probe.                                         |
+| GET    | `/api/categories`                          | All categories (JSON fields normalized).                |
+| GET    | `/api/analysis-items?category=&platform=`  | Items for a category, newest first, posts joined.       |
+| GET    | `/api/recipes`                             | All recipe cards (map keyed by `source_post_id`).       |
+| GET    | `/api/recipes/:postId`                     | Food item + its recipe card, by `source_post_id`.       |
+| GET    | `/api/enrichments/bgg`                     | BoardGameGeek links.                                    |
+| GET    | `/api/enrichments/tmdb`                    | TMDB links.                                             |
+| GET    | `/api/enrichments/igdb`                    | IGDB links.                                             |
+| GET    | `/api/enrichments/mal`                     | MyAnimeList links.                                      |
+| GET    | `/api/enrichments/hardcover`               | Hardcover links.                                        |
+| GET    | `/api/enrichments/instagram-storefronts`   | Amazon storefront URLs by IG owner.                     |
+| GET    | `/api/enrichments/travel-locations`        | Travel pins.                                            |
+
+### Writes (service-role key; RLS blocks anon writes)
+
+| Method | Path                                              | Description                 |
+| ------ | ------------------------------------------------- | --------------------------- |
+| DELETE | `/api/enrichments/bgg/:analysisItemId`            | Delete a BGG link.          |
+| PUT    | `/api/enrichments/tmdb/:analysisItemId`           | Upsert a TMDB link.         |
+| DELETE | `/api/enrichments/tmdb/:analysisItemId`           | Delete a TMDB link.         |
+| PATCH  | `/api/enrichments/tmdb/:analysisItemId/score`     | Set TMDB personal score.    |
+| PUT    | `/api/enrichments/igdb/:analysisItemId`           | Upsert an IGDB link.        |
+| DELETE | `/api/enrichments/igdb/:analysisItemId`           | Delete an IGDB link.        |
+| PATCH  | `/api/enrichments/igdb/:analysisItemId/score`     | Set IGDB personal score.    |
+| PUT    | `/api/enrichments/mal/:analysisItemId`            | Upsert a MAL link.          |
+| DELETE | `/api/enrichments/mal/:analysisItemId`            | Delete a MAL link.          |
+| PUT    | `/api/enrichments/hardcover/:analysisItemId`      | Upsert a Hardcover link.    |
+| DELETE | `/api/enrichments/hardcover/:analysisItemId`      | Delete a Hardcover link.    |
+
+To enforce the read/write split at the database, run
+[`sql/lockdown_enrichment_rls.sql`](./sql/lockdown_enrichment_rls.sql) in the
+Supabase SQL editor (anon → read-only; service-role bypasses RLS).
+
+> ⚠️ The write endpoints are currently **unauthenticated** — any client that can
+> reach the API can call them. Fine for local/personal use; add real auth before
+> exposing the API publicly.
+
+### `GET /api/recipes/:postId`
 
 ### `GET /api/recipes/:postId`
 

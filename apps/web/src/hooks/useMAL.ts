@@ -325,14 +325,11 @@ export function useUpsertMALLink() {
       malAnimeId:     number
       seriesTitle?:   string
     }) => {
-      const { error } = await supabase
-        .from('mal_links')
-        .upsert({
-          analysis_item_id: analysisItemId,
-          mal_anime_id:     malAnimeId,
-          series_title:     seriesTitle ?? null,
-        })
-      if (error) throw error
+      const res = await api.api.enrichments.mal[':analysisItemId'].$put({
+        param: { analysisItemId: String(analysisItemId) },
+        json: { malAnimeId, seriesTitle },
+      })
+      if (!res.ok) throw new Error(`Failed to save MAL link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['mal-links'] }),
   })
@@ -342,11 +339,10 @@ export function useDeleteMALLink() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (analysisItemId: number) => {
-      const { error } = await supabase
-        .from('mal_links')
-        .delete()
-        .eq('analysis_item_id', analysisItemId)
-      if (error) throw error
+      const res = await api.api.enrichments.mal[':analysisItemId'].$delete({
+        param: { analysisItemId: String(analysisItemId) },
+      })
+      if (!res.ok) throw new Error(`Failed to delete MAL link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['mal-links'] }),
   })
