@@ -1,12 +1,11 @@
 /**
  * BGG (BoardGameGeek) enrichment for Board Games.
  *
- * Read map is served by @trove/api (GET /api/enrichments/bgg). The delete
- * mutation still writes via supabase-js (covered by a later write/RLS batch).
+ * Both the read map and the delete mutation are served by @trove/api
+ * (GET /api/enrichments/bgg, DELETE /api/enrichments/bgg/:analysisItemId).
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
 import { api } from '@/lib/api'
 import type { BGGLinkData } from '@trove/shared'
 
@@ -31,11 +30,10 @@ export function useDeleteBGGLink() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (analysisItemId: number) => {
-      const { error } = await supabase
-        .from('bgg_links')
-        .delete()
-        .eq('analysis_item_id', analysisItemId)
-      if (error) throw error
+      const res = await api.api.enrichments.bgg[':analysisItemId'].$delete({
+        param: { analysisItemId: String(analysisItemId) },
+      })
+      if (!res.ok) throw new Error(`Failed to delete BGG link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['bgg-links'] }),
   })

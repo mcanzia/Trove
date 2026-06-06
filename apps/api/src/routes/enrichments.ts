@@ -1,5 +1,8 @@
 import { Hono } from 'hono'
+import { zValidator } from '@hono/zod-validator'
+import { z } from 'zod'
 import { supabase } from '../lib/supabase.js'
+import { supabaseAdmin } from '../lib/supabaseAdmin.js'
 import type {
   BGGLinkData,
   TMDBLink,
@@ -29,6 +32,45 @@ async function selectAll(table: string, columns: string): Promise<Row[]> {
 }
 
 const fail = (msg: string) => ({ error: msg })
+const ok = () => ({ ok: true as const })
+
+// Shared validators for the write endpoints.
+const idParam = z.object({ analysisItemId: z.coerce.number().int() })
+const scoreBody = z.object({ personalScore: z.number().nullable() })
+
+const tmdbUpsertBody = z.object({
+  tmdbId: z.number(),
+  mediaType: z.enum(['movie', 'tv']),
+  tmdbTitle: z.string().nullish(),
+  posterUrl: z.string().nullish(),
+  tmdbRating: z.number().nullish(),
+  genres: z.array(z.string()).optional(),
+  releaseYear: z.number().nullish(),
+})
+
+const igdbUpsertBody = z.object({
+  igdbGameId: z.number(),
+  gameTitle: z.string().nullish(),
+  coverUrl: z.string().nullish(),
+  igdbRating: z.number().nullish(),
+  genres: z.array(z.string()).optional(),
+  platforms: z.array(z.string()).optional(),
+  releaseYear: z.number().nullish(),
+})
+
+const malUpsertBody = z.object({
+  malAnimeId: z.number(),
+  seriesTitle: z.string().nullish(),
+})
+
+const hardcoverUpsertBody = z.object({
+  hardcoverBookId: z.number(),
+  bookTitle: z.string().nullish(),
+  coverUrl: z.string().nullish(),
+  hcCommunityRating: z.number().nullish(),
+  genres: z.array(z.string()).optional(),
+  releaseYear: z.number().nullish(),
+})
 
 export const enrichments = new Hono()
   .get('/bgg', async (c) => {
@@ -167,6 +209,215 @@ export const enrichments = new Hono()
         type: r.type as string,
       }))
       return c.json(result)
+    } catch (e) {
+      return c.json(fail((e as Error).message), 500)
+    }
+  })
+
+  // ── Writes (service-role; RLS blocks anon writes after the lockdown) ──────────
+
+  // BGG — delete only (links are created by the Python sync).
+  .delete('/bgg/:analysisItemId', zValidator('param', idParam), async (c) => {
+    const { analysisItemId } = c.req.valid('param')
+    try {
+      const { error } = await supabaseAdmin()
+        .from('bgg_links')
+        .delete()
+        .eq('analysis_item_id', analysisItemId)
+      if (error) return c.json(fail(error.message), 500)
+      return c.json(ok())
+    } catch (e) {
+      return c.json(fail((e as Error).message), 500)
+    }
+  })
+
+  // TMDB — upsert / delete / set personal score.
+  .put(
+    '/tmdb/:analysisItemId',
+    zValidator('param', idParam),
+    zValidator('json', tmdbUpsertBody),
+    async (c) => {
+      const { analysisItemId } = c.req.valid('param')
+      const b = c.req.valid('json')
+      try {
+        const { error } = await supabaseAdmin().from('tmdb_links').upsert({
+          analysis_item_id: analysisItemId,
+          tmdb_id: b.tmdbId,
+          media_type: b.mediaType,
+          tmdb_title: b.tmdbTitle ?? null,
+          poster_url: b.posterUrl ?? null,
+          tmdb_rating: b.tmdbRating ?? null,
+          genres: b.genres ?? [],
+          release_year: b.releaseYear ?? null,
+        })
+        if (error) return c.json(fail(error.message), 500)
+        return c.json(ok())
+      } catch (e) {
+        return c.json(fail((e as Error).message), 500)
+      }
+    },
+  )
+  .delete('/tmdb/:analysisItemId', zValidator('param', idParam), async (c) => {
+    const { analysisItemId } = c.req.valid('param')
+    try {
+      const { error } = await supabaseAdmin()
+        .from('tmdb_links')
+        .delete()
+        .eq('analysis_item_id', analysisItemId)
+      if (error) return c.json(fail(error.message), 500)
+      return c.json(ok())
+    } catch (e) {
+      return c.json(fail((e as Error).message), 500)
+    }
+  })
+  .patch(
+    '/tmdb/:analysisItemId/score',
+    zValidator('param', idParam),
+    zValidator('json', scoreBody),
+    async (c) => {
+      const { analysisItemId } = c.req.valid('param')
+      const { personalScore } = c.req.valid('json')
+      try {
+        const { error } = await supabaseAdmin()
+          .from('tmdb_links')
+          .update({ personal_score: personalScore })
+          .eq('analysis_item_id', analysisItemId)
+        if (error) return c.json(fail(error.message), 500)
+        return c.json(ok())
+      } catch (e) {
+        return c.json(fail((e as Error).message), 500)
+      }
+    },
+  )
+
+  // IGDB — upsert / delete / set personal score.
+  .put(
+    '/igdb/:analysisItemId',
+    zValidator('param', idParam),
+    zValidator('json', igdbUpsertBody),
+    async (c) => {
+      const { analysisItemId } = c.req.valid('param')
+      const b = c.req.valid('json')
+      try {
+        const { error } = await supabaseAdmin().from('igdb_links').upsert({
+          analysis_item_id: analysisItemId,
+          igdb_game_id: b.igdbGameId,
+          game_title: b.gameTitle ?? null,
+          cover_url: b.coverUrl ?? null,
+          igdb_rating: b.igdbRating ?? null,
+          genres: b.genres ?? [],
+          platforms: b.platforms ?? [],
+          release_year: b.releaseYear ?? null,
+        })
+        if (error) return c.json(fail(error.message), 500)
+        return c.json(ok())
+      } catch (e) {
+        return c.json(fail((e as Error).message), 500)
+      }
+    },
+  )
+  .delete('/igdb/:analysisItemId', zValidator('param', idParam), async (c) => {
+    const { analysisItemId } = c.req.valid('param')
+    try {
+      const { error } = await supabaseAdmin()
+        .from('igdb_links')
+        .delete()
+        .eq('analysis_item_id', analysisItemId)
+      if (error) return c.json(fail(error.message), 500)
+      return c.json(ok())
+    } catch (e) {
+      return c.json(fail((e as Error).message), 500)
+    }
+  })
+  .patch(
+    '/igdb/:analysisItemId/score',
+    zValidator('param', idParam),
+    zValidator('json', scoreBody),
+    async (c) => {
+      const { analysisItemId } = c.req.valid('param')
+      const { personalScore } = c.req.valid('json')
+      try {
+        const { error } = await supabaseAdmin()
+          .from('igdb_links')
+          .update({ personal_score: personalScore })
+          .eq('analysis_item_id', analysisItemId)
+        if (error) return c.json(fail(error.message), 500)
+        return c.json(ok())
+      } catch (e) {
+        return c.json(fail((e as Error).message), 500)
+      }
+    },
+  )
+
+  // MAL — upsert / delete.
+  .put(
+    '/mal/:analysisItemId',
+    zValidator('param', idParam),
+    zValidator('json', malUpsertBody),
+    async (c) => {
+      const { analysisItemId } = c.req.valid('param')
+      const b = c.req.valid('json')
+      try {
+        const { error } = await supabaseAdmin().from('mal_links').upsert({
+          analysis_item_id: analysisItemId,
+          mal_anime_id: b.malAnimeId,
+          series_title: b.seriesTitle ?? null,
+        })
+        if (error) return c.json(fail(error.message), 500)
+        return c.json(ok())
+      } catch (e) {
+        return c.json(fail((e as Error).message), 500)
+      }
+    },
+  )
+  .delete('/mal/:analysisItemId', zValidator('param', idParam), async (c) => {
+    const { analysisItemId } = c.req.valid('param')
+    try {
+      const { error } = await supabaseAdmin()
+        .from('mal_links')
+        .delete()
+        .eq('analysis_item_id', analysisItemId)
+      if (error) return c.json(fail(error.message), 500)
+      return c.json(ok())
+    } catch (e) {
+      return c.json(fail((e as Error).message), 500)
+    }
+  })
+
+  // Hardcover — upsert / delete.
+  .put(
+    '/hardcover/:analysisItemId',
+    zValidator('param', idParam),
+    zValidator('json', hardcoverUpsertBody),
+    async (c) => {
+      const { analysisItemId } = c.req.valid('param')
+      const b = c.req.valid('json')
+      try {
+        const { error } = await supabaseAdmin().from('hardcover_links').upsert({
+          analysis_item_id: analysisItemId,
+          hardcover_book_id: b.hardcoverBookId,
+          book_title: b.bookTitle ?? null,
+          cover_url: b.coverUrl ?? null,
+          hc_community_rating: b.hcCommunityRating ?? null,
+          genres: b.genres ?? [],
+          release_year: b.releaseYear ?? null,
+        })
+        if (error) return c.json(fail(error.message), 500)
+        return c.json(ok())
+      } catch (e) {
+        return c.json(fail((e as Error).message), 500)
+      }
+    },
+  )
+  .delete('/hardcover/:analysisItemId', zValidator('param', idParam), async (c) => {
+    const { analysisItemId } = c.req.valid('param')
+    try {
+      const { error } = await supabaseAdmin()
+        .from('hardcover_links')
+        .delete()
+        .eq('analysis_item_id', analysisItemId)
+      if (error) return c.json(fail(error.message), 500)
+      return c.json(ok())
     } catch (e) {
       return c.json(fail((e as Error).message), 500)
     }

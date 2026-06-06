@@ -330,11 +330,10 @@ export function useDeleteHardcoverLink() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: async (analysisItemId: number) => {
-      const { error } = await supabase
-        .from('hardcover_links')
-        .delete()
-        .eq('analysis_item_id', analysisItemId)
-      if (error) throw error
+      const res = await api.api.enrichments.hardcover[':analysisItemId'].$delete({
+        param: { analysisItemId: String(analysisItemId) },
+      })
+      if (!res.ok) throw new Error(`Failed to delete Hardcover link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-links'] }),
   })
@@ -361,18 +360,11 @@ export function useUpsertHardcoverLink() {
       genres?:            string[]
       releaseYear?:       number | null
     }) => {
-      const { error } = await supabase
-        .from('hardcover_links')
-        .upsert({
-          analysis_item_id:    analysisItemId,
-          hardcover_book_id:   hardcoverBookId,
-          book_title:          bookTitle          ?? null,
-          cover_url:           coverUrl           ?? null,
-          hc_community_rating: hcCommunityRating  ?? null,
-          genres:              genres             ?? [],
-          release_year:        releaseYear        ?? null,
-        })
-      if (error) throw error
+      const res = await api.api.enrichments.hardcover[':analysisItemId'].$put({
+        param: { analysisItemId: String(analysisItemId) },
+        json: { hardcoverBookId, bookTitle, coverUrl, hcCommunityRating, genres, releaseYear },
+      })
+      if (!res.ok) throw new Error(`Failed to save Hardcover link (${res.status})`)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hardcover-links'] }),
   })
