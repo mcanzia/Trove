@@ -1,39 +1,29 @@
 /**
- * Fetch travel location pins from the travel_locations table.
+ * Fetch travel location pins, served by @trove/api
+ * (GET /api/enrichments/travel-locations).
  * Returns a Map<analysisItemId, TravelLocation[]> for fast O(1) lookup.
  */
 
 import { useQuery } from '@tanstack/react-query'
-import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
+import type { TravelLocation } from '@trove/shared'
 
-export interface TravelLocation {
-  lat:   number
-  lng:   number
-  label: string
-  type:  string   // 'poi' | 'city_fallback' | 'address' | etc.
-}
-
+export type { TravelLocation }
 export type TravelLocationsMap = Map<number, TravelLocation[]>
 
 export function useTravelLocations(enabled = true) {
   return useQuery({
     queryKey: ['travel-locations'],
-    queryFn:  async (): Promise<TravelLocationsMap> => {
-      const { data, error } = await supabase
-        .from('travel_locations')
-        .select('analysis_item_id, lat, lng, label, type')
-      if (error) throw error
+    queryFn: async (): Promise<TravelLocationsMap> => {
+      const res = await api.api.enrichments['travel-locations'].$get()
+      if (!res.ok) throw new Error(`Failed to load travel locations (${res.status})`)
+      const rows = await res.json()
 
-      const map = new Map<number, TravelLocation[]>()
-      for (const row of data ?? []) {
-        const id = row.analysis_item_id as number
-        if (!map.has(id)) map.set(id, [])
-        map.get(id)!.push({
-          lat:   row.lat   as number,
-          lng:   row.lng   as number,
-          label: row.label as string,
-          type:  row.type  as string,
-        })
+      const map: TravelLocationsMap = new Map()
+      for (const { analysisItemId, ...loc } of rows) {
+        const existing = map.get(analysisItemId)
+        if (existing) existing.push(loc)
+        else map.set(analysisItemId, [loc])
       }
       return map
     },

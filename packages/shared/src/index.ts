@@ -95,3 +95,69 @@ export interface RecipeResponse {
   item: AnalysisItem
   card: RecipeCard | null
 }
+
+// ── Enrichment-link value types ────────────────────────────────────────────────
+// These are the Map *values* for the per-table enrichment reads. The matching
+// API endpoints return arrays of (value & key); the frontend hooks build Maps.
+
+export interface BGGLinkData {
+  bggGameId: number
+  gameTitle: string | null
+  coverUrl: string | null
+  thumbnailUrl: string | null
+  bggRating: number | null // community rating out of 10
+  bggWeight: number | null // complexity 1–5
+  yearPublished: number | null
+  minPlayers: number | null
+  maxPlayers: number | null
+  playingTime: number | null
+  categories: string[]
+  mechanics: string[]
+}
+
+export interface TMDBLink {
+  tmdbId: number
+  tmdbTitle: string | null
+  mediaType: 'movie' | 'tv'
+  personalScore: number | null // 1–10, null = unrated
+  posterUrl: string | null
+  tmdbRating: number | null
+  genres: string[]
+  releaseYear: number | null
+}
+
+export interface IGDBLink {
+  igdbGameId: number
+  igdbTitle: string | null
+  personalScore: number | null // 1–10, null = unrated
+  coverUrl: string | null
+  igdbRating: number | null
+  genres: string[]
+  platforms: string[]
+  releaseYear: number | null
+}
+
+export interface MALLinkData {
+  malAnimeId: number
+  seriesTitle: string | null
+  coverUrl: string | null
+  malScore: number | null
+  genres: string[]
+  releaseYear: number | null
+  numEpisodes: number | null
+}
+
+export interface HardcoverLinkData {
+  hardcoverBookId: number
+  coverUrl: string | null
+  hcCommunityRating: number | null
+  genres: string[]
+  releaseYear: number | null
+}
+
+export interface TravelLocation {
+  lat: number
+  lng: number
+  label: string
+  type: string // 'poi' | 'city_fallback' | 'address' | etc.
+}

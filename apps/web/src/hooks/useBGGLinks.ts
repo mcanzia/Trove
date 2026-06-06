@@ -1,58 +1,26 @@
 /**
  * BGG (BoardGameGeek) enrichment for Board Games.
  *
- * Reads from `bgg_links` which is populated by the Python sync script.
- * No auth required — BGG data is public.
+ * Read map is served by @trove/api (GET /api/enrichments/bgg). The delete
+ * mutation still writes via supabase-js (covered by a later write/RLS batch).
  */
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
+import type { BGGLinkData } from '@trove/shared'
 
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-export interface BGGLinkData {
-  bggGameId:    number
-  gameTitle:    string | null
-  coverUrl:     string | null
-  thumbnailUrl: string | null
-  bggRating:    number | null   // community rating out of 10
-  bggWeight:    number | null   // complexity 1–5
-  yearPublished: number | null
-  minPlayers:   number | null
-  maxPlayers:   number | null
-  playingTime:  number | null
-  categories:   string[]
-  mechanics:    string[]
-}
-
-// ── Hooks ─────────────────────────────────────────────────────────────────────
+export type { BGGLinkData }
 
 /** Returns a Map<analysisItemId, BGGLinkData> for all stored BGG links. */
 export function useBGGLinks() {
   return useQuery({
     queryKey: ['bgg-links'],
     queryFn: async (): Promise<Map<number, BGGLinkData>> => {
-      const { data, error } = await supabase
-        .from('bgg_links')
-        .select('analysis_item_id, bgg_game_id, game_title, cover_url, thumbnail_url, bgg_rating, bgg_weight, year_published, min_players, max_players, playing_time, categories, mechanics')
-      if (error) throw error
-      return new Map((data ?? []).map((r) => [
-        r.analysis_item_id as number,
-        {
-          bggGameId:    r.bgg_game_id    as number,
-          gameTitle:    r.game_title     as string | null,
-          coverUrl:     r.cover_url      as string | null,
-          thumbnailUrl: r.thumbnail_url  as string | null,
-          bggRating:    r.bgg_rating     as number | null,
-          bggWeight:    r.bgg_weight     as number | null,
-          yearPublished: r.year_published as number | null,
-          minPlayers:   r.min_players    as number | null,
-          maxPlayers:   r.max_players    as number | null,
-          playingTime:  r.playing_time   as number | null,
-          categories:   (r.categories as string[] | null) ?? [],
-          mechanics:    (r.mechanics  as string[] | null) ?? [],
-        },
-      ]))
+      const res = await api.api.enrichments.bgg.$get()
+      if (!res.ok) throw new Error(`Failed to load BGG links (${res.status})`)
+      const rows = await res.json()
+      return new Map(rows.map(({ analysisItemId, ...data }) => [analysisItemId, data]))
     },
     staleTime: 1000 * 60 * 10,
   })

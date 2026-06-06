@@ -27,14 +27,34 @@ function toRecipeCard(row: Record<string, unknown>): RecipeCard {
 /**
  * Recipe routes.
  *
- * GET /:postId — the Food & Cooking analysis_item for a given source post,
- * together with its structured recipe card (if one has been enriched).
+ * GET /         — all recipe cards (the Food category's enrichment map), keyed
+ *                 by source_post_id; the frontend builds a Map from the array.
+ * GET /:postId  — the Food & Cooking analysis_item for a given source post,
+ *                 together with its structured recipe card (if enriched).
  *
  * Migrated out of Trove/src/pages/RecipePage.tsx (useFoodItemByPost +
- * useRecipeCards lookup), which previously ran two supabase-js queries from
- * the browser. Addressed by source_post_id, which is stable across re-analysis.
+ * useRecipeCards lookup) and the useRecipeCards map hook, which previously ran
+ * supabase-js queries from the browser. Addressed by source_post_id, which is
+ * stable across re-analysis.
  */
-export const recipes = new Hono().get('/:postId', async (c) => {
+export const recipes = new Hono()
+  .get('/', async (c) => {
+    const { data, error } = await supabase
+      .from('recipe_cards')
+      .select(RECIPE_CARD_COLUMNS)
+
+    if (error) {
+      return c.json({ error: error.message }, 500)
+    }
+
+    const rows = (data ?? []) as Record<string, unknown>[]
+    const result: (RecipeCard & { sourcePostId: string })[] = rows.map((row) => ({
+      sourcePostId: row.source_post_id as string,
+      ...toRecipeCard(row),
+    }))
+    return c.json(result)
+  })
+  .get('/:postId', async (c) => {
   const postId = c.req.param('postId')
   if (!postId) {
     return c.json({ error: 'postId is required' }, 400)

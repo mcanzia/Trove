@@ -8,6 +8,8 @@
 import { useState, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
+import type { MALLinkData } from '@trove/shared'
 import {
   loadTokens, saveTokens, clearTokens, isExpired,
   generatePKCE, buildAuthUrl, saveVerifier,
@@ -296,36 +298,16 @@ export function useSearchMAL() {
 
 // ── MAL links (analysis_item_id → enriched link data) ────────────────────────
 
-export interface MALLinkData {
-  malAnimeId:  number
-  seriesTitle: string | null
-  coverUrl:    string | null
-  malScore:    number | null
-  genres:      string[]
-  releaseYear: number | null
-  numEpisodes: number | null
-}
+export type { MALLinkData }
 
 export function useMALLinks() {
   return useQuery({
     queryKey: ['mal-links'],
     queryFn:  async (): Promise<Map<number, MALLinkData>> => {
-      const { data, error } = await supabase
-        .from('mal_links')
-        .select('analysis_item_id, mal_anime_id, series_title, cover_url, mal_score, genres, release_year, num_episodes')
-      if (error) throw error
-      return new Map((data ?? []).map((r) => [
-        r.analysis_item_id as number,
-        {
-          malAnimeId:  r.mal_anime_id  as number,
-          seriesTitle: r.series_title  as string | null,
-          coverUrl:    r.cover_url     as string | null,
-          malScore:    r.mal_score     as number | null,
-          genres:      (r.genres       as string[] | null) ?? [],
-          releaseYear: r.release_year  as number | null,
-          numEpisodes: r.num_episodes  as number | null,
-        },
-      ]))
+      const res = await api.api.enrichments.mal.$get()
+      if (!res.ok) throw new Error(`Failed to load MAL links (${res.status})`)
+      const rows = await res.json()
+      return new Map(rows.map(({ analysisItemId, ...data }) => [analysisItemId, data]))
     },
     staleTime: 1000 * 60 * 10,
   })

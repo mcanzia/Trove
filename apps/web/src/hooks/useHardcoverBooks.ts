@@ -8,6 +8,8 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
+import { api } from '@/lib/api'
+import type { HardcoverLinkData } from '@trove/shared'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -307,33 +309,17 @@ export function useAddBookByTitle() {
 
 // ── Hardcover links (analysis_item_id → hardcover_book_id) ───────────────────
 
-export interface HardcoverLinkData {
-  hardcoverBookId:    number
-  coverUrl:           string | null
-  hcCommunityRating:  number | null
-  genres:             string[]
-  releaseYear:        number | null
-}
+export type { HardcoverLinkData }
 
 /** Returns a Map<analysisItemId, HardcoverLinkData> for all stored links. */
 export function useHardcoverLinks() {
   return useQuery({
     queryKey: ['hardcover-links'],
     queryFn: async (): Promise<Map<number, HardcoverLinkData>> => {
-      const { data, error } = await supabase
-        .from('hardcover_links')
-        .select('analysis_item_id, hardcover_book_id, cover_url, hc_community_rating, genres, release_year')
-      if (error) throw error
-      return new Map((data ?? []).map((r) => [
-        r.analysis_item_id as number,
-        {
-          hardcoverBookId:   r.hardcover_book_id      as number,
-          coverUrl:          r.cover_url              as string | null,
-          hcCommunityRating: r.hc_community_rating    as number | null,
-          genres:            (r.genres as string[] | null) ?? [],
-          releaseYear:       r.release_year           as number | null,
-        },
-      ]))
+      const res = await api.api.enrichments.hardcover.$get()
+      if (!res.ok) throw new Error(`Failed to load Hardcover links (${res.status})`)
+      const rows = await res.json()
+      return new Map(rows.map(({ analysisItemId, ...data }) => [analysisItemId, data]))
     },
     staleTime: 1000 * 60 * 10,
   })
