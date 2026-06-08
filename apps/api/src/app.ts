@@ -6,6 +6,7 @@ import { recipes } from './routes/recipes.js'
 import { categories } from './routes/categories.js'
 import { analysisItems } from './routes/analysisItems.js'
 import { enrichments } from './routes/enrichments.js'
+import { posts } from './routes/posts.js'
 
 export const app = new Hono()
 
@@ -27,6 +28,7 @@ const routes = app
   .route('/api/categories', categories)
   .route('/api/analysis-items', analysisItems)
   .route('/api/enrichments', enrichments)
+  .route('/api/posts', posts)
 
 // Export the app's type so the Trove frontend can later use Hono's typed
 // client:  const client = hc<AppType>(API_URL)  → fully typed requests.

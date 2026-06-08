@@ -161,3 +161,16 @@ export interface TravelLocation {
   label: string
   type: string // 'poi' | 'city_fallback' | 'address' | etc.
 }
+
+/** Lean post shape for the "surface every saved post" link-out cards. */
+export interface CategoryPost {
+  post_id: string
+  platform: Platform
+  url: string | null
+  title: string | null
+  caption: string | null
+  owner: string | null
+  owner_fullname: string | null
+  media_type: string | null
+  timestamp: string | null
+}

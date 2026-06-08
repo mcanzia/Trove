@@ -8,6 +8,7 @@ export type {
   Category,
   OutputField,
   AnalysisItem,
+  CategoryPost,
   RecipeCard,
   RecipeResponse,
 } from '@trove/shared'
