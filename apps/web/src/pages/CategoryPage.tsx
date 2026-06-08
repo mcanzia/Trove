@@ -62,6 +62,7 @@ import {
 import { useBGGLinks } from '@/hooks/useBGGLinks'
 import { useRecipeCards } from '@/hooks/useRecipeCards'
 import { useInstagramStorefronts } from '@/hooks/useInstagramStorefronts'
+import { SavedPostsSection } from '@/components/SavedPostsSection'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
@@ -252,6 +253,13 @@ export default function CategoryPage() {
   )
 
   const { data: items, isLoading, error } = useAnalysisItems({ categoryName, platform })
+
+  // Post IDs that produced an extracted item — used to find classified posts
+  // with no highlight, which surface as link-out cards (nothing saved is hidden).
+  const surfacedPostIds = useMemo(
+    () => new Set((items ?? []).map((i) => i.source_post_id).filter((x): x is string => !!x)),
+    [items],
+  )
   const { data: travelLocations } = useTravelLocations()
 
   const groupBy = category?.group_by
@@ -1738,6 +1746,16 @@ export default function CategoryPage() {
             columns={columns}
             data={singleGroupField ? level1Items : items}
             globalFilter={search}
+          />
+        )}
+
+        {/* Surface every saved post — classified posts with no extracted
+            highlight render as collapsible link-out cards. */}
+        {categoryName && (
+          <SavedPostsSection
+            categoryName={categoryName}
+            platform={platform}
+            surfacedPostIds={surfacedPostIds}
           />
         )}
       </div>
