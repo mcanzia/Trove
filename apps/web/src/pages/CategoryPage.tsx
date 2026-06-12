@@ -5,7 +5,10 @@ import { type ColumnDef } from '@tanstack/react-table'
 import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 
-import { ChevronDown, MapPin, Table2, Map as MapIcon } from 'lucide-react'
+import { ChevronDown, MapPin, Table2, Map as MapIcon, Search, Play } from 'lucide-react'
+import { getCategoryTheme } from '@/lib/categoryConfig'
+import { pushRecent } from '@/lib/recents'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useAnalysisItems } from '@/hooks/useAnalysisItems'
 import { useCategories } from '@/hooks/useCategories'
 import { useTravelLocations } from '@/hooks/useTravelLocations'
@@ -44,6 +47,7 @@ import {
   useUpdateTMDBScore,
   useSearchTMDB,
   type TMDBTitle,
+  type TMDBLink,
 } from '@/hooks/useTMDB'
 import {
   useMALAuth,
@@ -78,12 +82,14 @@ function buildColumns(
 ): ColumnDef<AnalysisItem, unknown>[] {
   const dynamic: ColumnDef<AnalysisItem, unknown>[] = fields
     .filter((f) => !hiddenKeys.includes(f.key))
-    .map((f) => ({
+    .map((f, i) => ({
       id: f.key,
       header: f.label,
       accessorFn: (row) => row.item_data[f.key] ?? '',
       cell: ({ getValue }) => (
-        <span className="text-foreground">{String(getValue() ?? '')}</span>
+        <span className={i === 0 ? 'font-medium text-foreground' : 'text-foreground'}>
+          {String(getValue() ?? '')}
+        </span>
       ),
     }))
 
@@ -131,7 +137,7 @@ function buildColumns(
       cell: ({ getValue }) => {
         const p = getValue() as string
         return (
-          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
             p === 'reddit'
               ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
               : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400'
@@ -203,11 +209,12 @@ function CityTable({ city, items, columns, search }: CityTableProps) {
   return (
     <section className="space-y-3">
       <div className="flex items-center gap-2">
-        <MapPin size={15} className="text-muted-foreground shrink-0" />
+        <MapPin size={15} className="text-gold shrink-0" />
         <h2 className="text-base font-semibold text-foreground">{city}</h2>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-muted-foreground tabular-nums">
           {items.length} tip{items.length !== 1 ? 's' : ''}
         </span>
+        <span className="h-px flex-1 bg-border" aria-hidden />
       </div>
       <DataTable columns={columns} data={items} globalFilter={search} />
     </section>
@@ -215,6 +222,17 @@ function CityTable({ city, items, columns, search }: CityTableProps) {
 }
 
 // ── page ─────────────────────────────────────────────────────────────────────
+
+// Product categories that get a Shop link column
+const PRODUCT_CATEGORIES: Record<string, { nameField: string; fallback: 'amazon' | 'google' }> = {
+  'Home & Kitchen Products':   { nameField: 'product_name',    fallback: 'amazon' },
+  'Skincare & Acne Treatment': { nameField: 'product_routine', fallback: 'amazon' },
+  'Fashion & Beauty':          { nameField: 'product_routine', fallback: 'amazon' },
+  'Tech & Gadgets':            { nameField: 'name',            fallback: 'google' },
+}
+
+// Non-social-media URL regex (strips Instagram/Reddit/Redd.it)
+const EXTERNAL_URL_RE = /https?:\/\/(?!(?:www\.)?(?:instagram\.com|reddit\.com|redd\.it))[^\s)"'<>]+/
 
 export default function CategoryPage() {
   const { slug } = useParams<{ slug: string }>()
@@ -225,7 +243,7 @@ export default function CategoryPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const [search, setSearch] = useState('')
   const [flyTarget, setFlyTarget] = useState<FlyTarget | null>(null)
-  const flyKeyRef = useRef(0)
+  const searchInputRef = useRef<HTMLInputElement>(null)
 
   // Derive controlled state from URL search params so the page is
   // fully shareable/bookmarkable and survives a browser refresh.
@@ -260,6 +278,38 @@ export default function CategoryPage() {
     () => new Set((items ?? []).map((i) => i.source_post_id).filter((x): x is string => !!x)),
     [items],
   )
+
+  // Platform mix for the hero meta line (computed from loaded items).
+  const platformMix = useMemo(() => {
+    const list = items ?? []
+    let reddit = 0
+    let instagram = 0
+    for (const i of list) {
+      if (i.platform === 'reddit') reddit++
+      else if (i.platform === 'instagram') instagram++
+    }
+    return { total: list.length, reddit, instagram }
+  }, [items])
+
+  // Record the visited category into recents for the command palette.
+  useEffect(() => {
+    if (category?.name) pushRecent(category.name)
+  }, [category?.name])
+
+  // Press "/" anywhere to focus the table search (ignore when typing in a field).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== '/' || e.metaKey || e.ctrlKey || e.altKey) return
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return
+      e.preventDefault()
+      searchInputRef.current?.focus()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   const { data: travelLocations } = useTravelLocations()
 
   const groupBy = category?.group_by
@@ -320,11 +370,9 @@ export default function CategoryPage() {
   const handleLocationClick = useMemo(() => {
     if (!isHierarchical) return undefined
     return (lat: number, lng: number, itemId?: number) => {
-      flyKeyRef.current += 1
-      setFlyTarget({ lat, lng, key: flyKeyRef.current, itemId })
+      setFlyTarget((prev) => ({ lat, lng, key: (prev?.key ?? 0) + 1, itemId }))
       setParam('view', 'map')
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isHierarchical, setParam])
 
   const qc      = useQueryClient()
@@ -339,17 +387,8 @@ export default function CategoryPage() {
   const isTMDB        = isMovies || isTVSeries
   const tmdbMediaType = isTVSeries ? 'tv' : 'movie'
 
-  // Product categories that get a Shop link column
-  const PRODUCT_CATEGORIES: Record<string, { nameField: string; fallback: 'amazon' | 'google' }> = {
-    'Home & Kitchen Products':   { nameField: 'product_name',    fallback: 'amazon' },
-    'Skincare & Acne Treatment': { nameField: 'product_routine', fallback: 'amazon' },
-    'Fashion & Beauty':          { nameField: 'product_routine', fallback: 'amazon' },
-    'Tech & Gadgets':            { nameField: 'name',            fallback: 'google' },
-  }
   const productConfig = PRODUCT_CATEGORIES[categoryName] ?? null
-
-  // Non-social-media URL regex (strips Instagram/Reddit/Redd.it)
-  const EXTERNAL_URL_RE = /https?:\/\/(?!(?:www\.)?(?:instagram\.com|reddit\.com|redd\.it))[^\s)"'<>]+/
+  const { data: storefronts } = useInstagramStorefronts()
 
   /** Resolve the best shop link for a product item. Priority:
    *  1. Post URL if external (not Instagram/Reddit)
@@ -357,7 +396,7 @@ export default function CategoryPage() {
    *  3. Amazon storefront for the posting account (if verified)
    *  4. Amazon search (physical) or Google search (software/mixed)
    */
-  function getShopLink(item: AnalysisItem): { url: string; label: string } | null {
+  const getShopLink = useCallback((item: AnalysisItem): { url: string; label: string } | null => {
     if (!productConfig) return null
 
     // 1. External post URL
@@ -402,10 +441,9 @@ export default function CategoryPage() {
       url: `https://www.amazon.com/s?k=${encodeURIComponent(productName)}`,
       label: 'Amazon →',
     }
-  }
+  }, [productConfig, storefronts])
   const { data: bggLinks }          = useBGGLinks()
   const { data: recipeCards }       = useRecipeCards()
-  const { data: storefronts }       = useInstagramStorefronts()
   const { data: hardcoverLibrary }  = useHardcoverBooks()
   const { data: hardcoverLinks }    = useHardcoverLinks()
   const updateRating    = useUpdateHardcoverRating()
@@ -484,7 +522,7 @@ export default function CategoryPage() {
   const [igdbModalResults,   setIgdbModalResults]   = useState<IGDBGame[]>([])
   const [igdbModalSearching, setIgdbModalSearching] = useState(false)
 
-  const openIGDBModal = (title: string, itemId: number) => {
+  const openIGDBModal = useCallback((title: string, itemId: number) => {
     setIgdbModalContext({ title, itemId })
     setIgdbModalResults([])
     setIgdbModalSearching(true)
@@ -495,7 +533,7 @@ export default function CategoryPage() {
         onSettled: () => setIgdbModalSearching(false),
       },
     )
-  }
+  }, [searchIGDB])
 
   const runIGDBSync = useCallback(async () => {
     if (!items || !igdbLinks) return
@@ -558,7 +596,6 @@ export default function CategoryPage() {
     } catch (e) {
       console.error('IGDB sync error:', e)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, igdbLinks, qc])
 
   // Auto-sync IGDB when items and links first load — runs once per page visit.
@@ -578,7 +615,7 @@ export default function CategoryPage() {
   const [tmdbModalResults,   setTmdbModalResults]   = useState<TMDBTitle[]>([])
   const [tmdbModalSearching, setTmdbModalSearching] = useState(false)
 
-  const openTMDBModal = (title: string, itemId: number) => {
+  const openTMDBModal = useCallback((title: string, itemId: number) => {
     setTmdbModalContext({ title, itemId })
     setTmdbModalResults([])
     setTmdbModalSearching(true)
@@ -589,7 +626,7 @@ export default function CategoryPage() {
         onSettled: () => setTmdbModalSearching(false),
       },
     )
-  }
+  }, [searchTMDB, tmdbMediaType])
 
   const runTMDBSync = useCallback(async () => {
     if (!items || !tmdbLinks) return
@@ -633,7 +670,7 @@ export default function CategoryPage() {
         })
       if (rows.length > 0) await supabase.from('tmdb_links').upsert(rows)
 
-      const current = qc.getQueryData<Map<number, TMDBTitle>>(['tmdb-links']) ?? new Map()
+      const current = qc.getQueryData<Map<number, TMDBLink>>(['tmdb-links']) ?? new Map<number, TMDBLink>()
       const next    = new Map(current)
       for (const { itemId, title } of unlinked) {
         const m = byTitle.get(title)
@@ -646,13 +683,12 @@ export default function CategoryPage() {
           tmdbRating:    m.rating      ?? null,
           genres:        m.genres      ?? [],
           releaseYear:   m.releaseYear ?? null,
-        } as any)
+        })
       }
       qc.setQueryData(['tmdb-links'], next)
     } catch (e) {
       console.error('TMDB sync error:', e)
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, tmdbLinks, isMovies, tmdbMediaType, qc])
 
   // Auto-sync TMDB when items and links first load — runs once per page visit.
@@ -894,7 +930,7 @@ export default function CategoryPage() {
               {genres && genres.length > 0 && (
                 <div className="flex flex-wrap gap-0.5">
                   {genres.slice(0, 2).map((g) => (
-                    <span key={g} className="text-[9px] px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 leading-none whitespace-nowrap">
+                    <span key={g} className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400 leading-none whitespace-nowrap">
                       {g}
                     </span>
                   ))}
@@ -1107,7 +1143,7 @@ export default function CategoryPage() {
               {link.genres.length > 0 && (
                 <div className="flex flex-wrap gap-0.5">
                   {link.genres.slice(0, 2).map((g) => (
-                    <span key={g} className="text-[9px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 leading-none whitespace-nowrap">
+                    <span key={g} className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 leading-none whitespace-nowrap">
                       {g}
                     </span>
                   ))}
@@ -1224,7 +1260,7 @@ export default function CategoryPage() {
               {link.genres.length > 0 && (
                 <div className="flex flex-wrap gap-0.5">
                   {link.genres.slice(0, 2).map((g) => (
-                    <span key={g} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 leading-none whitespace-nowrap">
+                    <span key={g} className="rounded-full px-2 py-0.5 text-[10px] font-medium bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400 leading-none whitespace-nowrap">
                       {g}
                     </span>
                   ))}
@@ -1292,10 +1328,10 @@ export default function CategoryPage() {
   }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations,
       isBoardGames, bggLinks, isMtg, isAnime, isFood, recipeCards, slug,
       isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
-      updateMALStatus, updateMALScore, searchMAL, deleteMALLink, items,
-      igdbLinks, searchIGDB, deleteIGDBLink, updateIGDBScore,
-      isTMDB, isMovies, tmdbLinks, deleteTMDBLink, updateTMDBScore,
-      productConfig, getShopLink, storefronts])
+      updateMALStatus, updateMALScore, searchMAL, deleteMALLink,
+      igdbLinks, deleteIGDBLink, updateIGDBScore, openIGDBModal,
+      isTMDB, isMovies, tmdbLinks, deleteTMDBLink, updateTMDBScore, openTMDBModal,
+      productConfig, getShopLink])
 
   // Flag lookup for the dropdown
   const getOptionLabel = (value: string) => {
@@ -1304,8 +1340,10 @@ export default function CategoryPage() {
     return value
   }
 
+  const theme = getCategoryTheme(categoryName)
+
   return (
-    <div className="min-h-screen bg-background">
+    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
       {/* Hardcover search modal */}
       {modalContext && (
         <HardcoverSearchModal
@@ -1461,29 +1499,41 @@ export default function CategoryPage() {
         />
       )}
 
-      <div className="max-w-7xl mx-auto px-6 py-12">
+      <div className="max-w-7xl mx-auto px-6 py-8">
 
-        {/* Header */}
-        <div className="mb-8">
-          <Link to="/" className="text-sm text-muted-foreground hover:text-foreground transition-colors">
-            ← All categories
-          </Link>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
-            {categoryName}
-          </h1>
-          {category?.extraction_goal && (
-            <p className="mt-1 text-muted-foreground">{category.extraction_goal}</p>
-          )}
+        {/* Hero header */}
+        <div className="mb-6 flex items-center gap-4">
+          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl shrink-0 ${theme.iconBgClass}`}>
+            <theme.icon size={24} className={theme.iconClass} aria-hidden />
+          </div>
+          <div className="min-w-0">
+            <h1 className="font-display text-3xl font-semibold tracking-tight text-foreground truncate">
+              {categoryName}
+            </h1>
+            <p className="mt-0.5 text-sm text-muted-foreground tabular-nums">
+              {platformMix.total} item{platformMix.total !== 1 ? 's' : ''}
+              {platformMix.reddit > 0 && platformMix.instagram > 0 && (
+                <> · {platformMix.reddit} Reddit · {platformMix.instagram} Instagram</>
+              )}
+            </p>
+          </div>
         </div>
 
-        {/* MAL connect / disconnect banner */}
+        {/* MAL connect / disconnect integration card */}
         {isAnime && (
-          <div className="mb-6 flex items-center justify-between gap-4 rounded-lg border border-border bg-muted/30 px-4 py-3">
+          <div className="mb-6 flex items-center justify-between gap-4 rounded-xl border bg-card px-4 py-3">
             {malAuth.isAuthenticated ? (
               <>
-                <p className="text-xs text-muted-foreground">
-                  Connected to <span className="font-medium text-foreground">MyAnimeList</span> — status and score are synced with your list.
-                </p>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30 shrink-0">
+                    <Play size={15} className="text-violet-600 dark:text-violet-400" aria-hidden />
+                  </span>
+                  <span className="text-sm font-medium text-foreground">MyAnimeList</span>
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" aria-hidden />
+                    Synced
+                  </span>
+                </div>
                 <div className="flex items-center gap-3 shrink-0">
                   {malConfirming === 'disconnect' ? (
                     <span className="flex items-center gap-2 text-xs">
@@ -1509,12 +1559,18 @@ export default function CategoryPage() {
               </>
             ) : (
               <>
-                <p className="text-xs text-muted-foreground">
-                  Connect your <span className="font-medium text-foreground">MyAnimeList</span> account to track your watch status and scores.
-                </p>
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100 dark:bg-violet-900/30 shrink-0">
+                    <Play size={15} className="text-violet-600 dark:text-violet-400" aria-hidden />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-foreground">MyAnimeList</p>
+                    <p className="text-xs text-muted-foreground">Connect to track your watch status and scores.</p>
+                  </div>
+                </div>
                 <button
                   onClick={malAuth.login}
-                  className="px-3 py-1.5 rounded-lg bg-violet-600 text-white text-xs font-medium hover:bg-violet-700 transition-colors cursor-pointer whitespace-nowrap"
+                  className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:bg-primary/90 transition-colors cursor-pointer whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   Connect MAL
                 </button>
@@ -1525,117 +1581,140 @@ export default function CategoryPage() {
 
 
 
-        {/* Controls */}
-        <div className="flex flex-col gap-3 mb-6">
-          {/* Row 1: platform pills + group-by + search + map toggle */}
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Platform filter */}
-            <div className="flex gap-2">
-              {(['all', 'reddit', 'instagram'] as const).map((p) => (
-                <button
-                  key={p}
-                  onClick={() => setParam('platform', p === 'all' ? null : p)}
-                  className={`px-3 py-1 rounded-full text-sm border transition-colors ${
-                    (p === 'all' && !platform) || platform === p
-                      ? 'bg-primary text-primary-foreground border-primary'
-                      : 'bg-background text-muted-foreground border-border hover:border-primary/50'
-                  }`}
-                >
-                  {p.charAt(0).toUpperCase() + p.slice(1)}
-                </button>
-              ))}
-            </div>
+        {/* Toolbar */}
+        <div className="sticky top-14 z-30 -mx-6 mb-6 border-b border-border/60 bg-background/80 px-6 py-3 backdrop-blur-md">
+          <div className="flex flex-col gap-3">
+            {/* Row 1: platform segmented + group-by + search + map toggle */}
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Platform filter — segmented control */}
+              <div className="flex items-center gap-0.5 rounded-lg border bg-muted/50 p-0.5">
+                {(['all', 'reddit', 'instagram'] as const).map((p) => {
+                  const active = (p === 'all' && !platform) || platform === p
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setParam('platform', p === 'all' ? null : p)}
+                      className={`rounded-md px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                        active
+                          ? 'bg-card shadow-sm font-medium text-foreground'
+                          : 'text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {p.charAt(0).toUpperCase() + p.slice(1)}
+                    </button>
+                  )
+                })}
+              </div>
 
-            {/* Group-by dropdown */}
-            {level1Options.length > 0 && (
-              <div className="relative">
-                <select
-                  value={activeGroup}
-                  onChange={(e) => { setParam('group', e.target.value); setFlyTarget(null) }}
-                  className="appearance-none pl-3 pr-8 py-1.5 text-sm rounded-md border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring cursor-pointer"
-                >
-                  {level1Options.map((opt) => (
-                    <option key={opt} value={opt}>{getOptionLabel(opt)}</option>
-                  ))}
-                </select>
-                <ChevronDown
-                  size={14}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+              {/* Group-by dropdown */}
+              {level1Options.length > 0 && (
+                <div className="relative">
+                  <select
+                    value={activeGroup}
+                    onChange={(e) => { setParam('group', e.target.value); setFlyTarget(null) }}
+                    className="appearance-none rounded-lg border bg-card pl-3 pr-8 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring cursor-pointer"
+                  >
+                    {level1Options.map((opt) => (
+                      <option key={opt} value={opt}>{getOptionLabel(opt)}</option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    size={14}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+                  />
+                </div>
+              )}
+
+              {/* Search */}
+              <div className="relative ml-auto">
+                <Search
+                  size={15}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none"
+                />
+                <input
+                  ref={searchInputRef}
+                  type="search"
+                  placeholder="Search…"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className="w-64 rounded-lg border bg-card pl-9 pr-3 py-1.5 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </div>
-            )}
 
-            {/* Search */}
-            <input
-              type="search"
-              placeholder="Search…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="ml-auto px-3 py-1.5 text-sm rounded-md border border-border bg-background placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring w-56"
-            />
+              {/* Map / Table toggle — segmented control (hierarchical only) */}
+              {isHierarchical && (
+                <div className="flex items-center gap-0.5 rounded-lg border bg-muted/50 p-0.5">
+                  <button
+                    onClick={() => setParam('view', 'table')}
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      viewMode === 'table'
+                        ? 'bg-card shadow-sm font-medium text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Table2 size={14} /> Table
+                  </button>
+                  <button
+                    onClick={() => setParam('view', 'map')}
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      viewMode === 'map'
+                        ? 'bg-card shadow-sm font-medium text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <MapIcon size={14} /> Map
+                  </button>
+                </div>
+              )}
+            </div>
 
-            {/* Map / Table toggle — only for hierarchical group_by categories */}
-            {isHierarchical && (
-              <div className="flex rounded-md border border-border overflow-hidden">
-                <button
-                  onClick={() => setParam('view', 'table')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
-                    viewMode === 'table'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-background text-muted-foreground hover:bg-muted'
-                  }`}
-                >
-                  <Table2 size={14} /> Table
-                </button>
-                <button
-                  onClick={() => setParam('view', 'map')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm transition-colors ${
-                    viewMode === 'map'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-background text-muted-foreground hover:bg-muted'
-                  }`}
-                >
-                  <MapIcon size={14} /> Map
-                </button>
+            {/* Row 2: Hardcover status filter (books only) */}
+            {isBooks && (
+              <div className="flex flex-wrap gap-2">
+                {([
+                  { key: 'all',       label: 'All',            cls: 'data-[active]:bg-primary data-[active]:text-primary-foreground data-[active]:border-primary' },
+                  { key: 'untracked', label: 'Not Added',      cls: 'data-[active]:bg-muted data-[active]:text-foreground data-[active]:border-border' },
+                  { key: '1',         label: 'Want to Read',   cls: 'data-[active]:bg-blue-50 data-[active]:text-blue-700 data-[active]:border-blue-400 dark:data-[active]:bg-blue-900/30 dark:data-[active]:text-blue-300 dark:data-[active]:border-blue-700' },
+                  { key: '2',         label: 'Reading',        cls: 'data-[active]:bg-yellow-50 data-[active]:text-yellow-700 data-[active]:border-yellow-400 dark:data-[active]:bg-yellow-900/30 dark:data-[active]:text-yellow-300 dark:data-[active]:border-yellow-700' },
+                  { key: '3',         label: 'Read',           cls: 'data-[active]:bg-green-50 data-[active]:text-green-700 data-[active]:border-green-400 dark:data-[active]:bg-green-900/30 dark:data-[active]:text-green-300 dark:data-[active]:border-green-700' },
+                  { key: '4',         label: 'Did Not Finish', cls: 'data-[active]:bg-muted data-[active]:text-foreground data-[active]:border-border' },
+                ] as const).map(({ key, label, cls }) => {
+                  const active = statusFilter === key
+                  return (
+                    <button
+                      key={key}
+                      data-active={active ? '' : undefined}
+                      onClick={() => setStatusFilter(key)}
+                      className={`rounded-full border px-3 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${cls} ${
+                        active ? '' : 'border-border bg-card text-muted-foreground hover:text-foreground hover:border-foreground/30'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  )
+                })}
               </div>
             )}
           </div>
-
-          {/* Row 2: Hardcover status filter (books only) */}
-          {isBooks && (
-            <div className="flex flex-wrap gap-2">
-              {([
-                { key: 'all',       label: 'All',              cls: 'border-border'                                                                                          },
-                { key: 'untracked', label: 'Not Added',        cls: 'border-gray-300 data-[active]:bg-white data-[active]:text-gray-700'                                     },
-                { key: '1',         label: 'Want to Read',     cls: 'border-blue-300 data-[active]:bg-blue-50 data-[active]:text-blue-700 data-[active]:border-blue-400'     },
-                { key: '2',         label: 'Reading',          cls: 'border-yellow-300 data-[active]:bg-yellow-50 data-[active]:text-yellow-700 data-[active]:border-yellow-400' },
-                { key: '3',         label: 'Read',             cls: 'border-green-300 data-[active]:bg-green-50 data-[active]:text-green-700 data-[active]:border-green-400' },
-                { key: '4',         label: 'Did Not Finish',   cls: 'border-gray-400 data-[active]:bg-gray-200 data-[active]:text-gray-700 data-[active]:border-gray-500'    },
-              ] as const).map(({ key, label, cls }) => {
-                const active = statusFilter === key
-                return (
-                  <button
-                    key={key}
-                    data-active={active ? '' : undefined}
-                    onClick={() => setStatusFilter(key)}
-                    className={`px-3 py-1 rounded-full text-sm border transition-colors ${cls} ${
-                      active
-                        ? key === 'all'
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : ''
-                        : 'bg-background text-muted-foreground hover:border-foreground/30'
-                    }`}
-                  >
-                    {label}
-                  </button>
-                )
-              })}
-            </div>
-          )}
         </div>
 
         {/* States */}
-        {isLoading && <div className="text-muted-foreground">Loading…</div>}
+        {isLoading && (
+          <div className="rounded-xl border bg-card overflow-hidden shadow-xs">
+            <div className="flex items-center gap-4 border-b border-border/60 bg-muted/40 px-3 h-10">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-3 w-20" />
+              ))}
+            </div>
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-4 border-b border-border/60 px-3 py-2.5">
+                {Array.from({ length: 5 }).map((_, j) => (
+                  <Skeleton key={j} className="h-4 w-24" />
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
         {error && <div className="text-destructive">Failed to load items.</div>}
 
         {/* Hierarchical: map — always mounted so flyTo works instantly from

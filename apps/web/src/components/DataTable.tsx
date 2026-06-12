@@ -11,6 +11,7 @@ import {
   type VisibilityState,
   type ColumnFiltersState,
 } from '@tanstack/react-table'
+import { ArrowUpDown, ArrowUp, ArrowDown, ChevronLeft, ChevronRight, SearchX } from 'lucide-react'
 import {
   Table,
   TableBody,
@@ -19,6 +20,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { EmptyState } from '@/components/ui/EmptyState'
 
 interface DataTableProps<TData> {
   columns: ColumnDef<TData, unknown>[]
@@ -31,6 +33,7 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
   const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- informational: React Compiler (not enabled here) would skip memoizing this component
   const table = useReactTable({
     data,
     columns,
@@ -53,95 +56,119 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
     },
   })
 
+  const filteredCount = table.getFilteredRowModel().rows.length
+  const pageSize = table.getState().pagination.pageSize
+  const pageIndex = table.getState().pagination.pageIndex
+  const rangeStart = filteredCount === 0 ? 0 : pageIndex * pageSize + 1
+  const rangeEnd = Math.min((pageIndex + 1) * pageSize, filteredCount)
+
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-border overflow-hidden">
-        <Table>
-          <TableHeader>
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id} className="bg-muted/50 hover:bg-muted/50">
-                {headerGroup.headers.map((header) => (
-                  <TableHead
-                    key={header.id}
-                    style={header.column.columnDef.size ? { width: header.column.columnDef.size, minWidth: header.column.columnDef.size } : undefined}
-                  >
-                    {header.isPlaceholder ? null : (
-                      <button
-                        className={
-                          header.column.getCanSort()
-                            ? 'flex items-center gap-1 cursor-pointer select-none hover:text-foreground transition-colors'
-                            : ''
-                        }
-                        onClick={header.column.getToggleSortingHandler()}
+      <div className="rounded-xl border bg-card overflow-hidden shadow-xs">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id} className="bg-muted/40 hover:bg-muted/40">
+                  {headerGroup.headers.map((header) => {
+                    const sorted = header.column.getIsSorted()
+                    return (
+                      <TableHead
+                        key={header.id}
+                        className={`px-3 text-xs font-medium uppercase tracking-wider ${
+                          sorted ? 'text-foreground' : 'text-muted-foreground'
+                        }`}
+                        style={header.column.columnDef.size ? { width: header.column.columnDef.size, minWidth: header.column.columnDef.size } : undefined}
                       >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        {header.column.getCanSort() && (
-                          <span className="text-muted-foreground text-xs">
-                            {{ asc: ' ↑', desc: ' ↓' }[header.column.getIsSorted() as string] ?? ' ↕'}
-                          </span>
+                        {header.isPlaceholder ? null : (
+                          <button
+                            className={
+                              header.column.getCanSort()
+                                ? 'flex items-center gap-1 cursor-pointer select-none hover:text-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm'
+                                : 'flex items-center gap-1'
+                            }
+                            onClick={header.column.getToggleSortingHandler()}
+                          >
+                            {flexRender(header.column.columnDef.header, header.getContext())}
+                            {header.column.getCanSort() && (
+                              sorted === 'asc'
+                                ? <ArrowUp size={12} className="text-foreground" />
+                                : sorted === 'desc'
+                                  ? <ArrowDown size={12} className="text-foreground" />
+                                  : <ArrowUpDown size={12} className="opacity-50" />
+                            )}
+                          </button>
                         )}
-                      </button>
-                    )}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows.length ? (
-              table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell
-                      key={cell.id}
-                      style={cell.column.columnDef.size ? { width: cell.column.columnDef.size, minWidth: cell.column.columnDef.size } : undefined}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
+                      </TableHead>
+                    )
+                  })}
                 </TableRow>
-              ))
-            ) : (
-              <TableRow>
-                <TableCell colSpan={columns.length} className="text-center text-muted-foreground py-10">
-                  No results.
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows.length ? (
+                table.getRowModel().rows.map((row) => (
+                  <TableRow
+                    key={row.id}
+                    className="border-border/60 hover:bg-accent/40 transition-colors"
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell
+                        key={cell.id}
+                        className="px-3 py-2.5"
+                        style={cell.column.columnDef.size ? { width: cell.column.columnDef.size, minWidth: cell.column.columnDef.size } : undefined}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow className="hover:bg-transparent">
+                  <TableCell colSpan={columns.length} className="p-0">
+                    <EmptyState
+                      icon={SearchX}
+                      title="No results"
+                      description="Try a different search or filter."
+                    />
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
       </div>
 
       {/* Pagination */}
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>
-          {table.getFilteredRowModel().rows.length} item{table.getFilteredRowModel().rows.length !== 1 ? 's' : ''}
+        <span className="tabular-nums">
+          {rangeStart}–{rangeEnd} of {filteredCount}
           {globalFilter ? ` matching "${globalFilter}"` : ''}
         </span>
-        <div className="flex items-center gap-4">
-          <span>
-            Page {table.getState().pagination.pageIndex + 1} of {table.getPageCount()}
-          </span>
-          <div className="flex gap-1">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
             <button
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
-              className="px-3 py-1 rounded border border-border disabled:opacity-40 hover:bg-muted transition-colors"
+              aria-label="Previous page"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              ←
+              <ChevronLeft size={16} />
             </button>
             <button
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
-              className="px-3 py-1 rounded border border-border disabled:opacity-40 hover:bg-muted transition-colors"
+              aria-label="Next page"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              →
+              <ChevronRight size={16} />
             </button>
           </div>
           <select
             value={table.getState().pagination.pageSize}
             onChange={(e) => table.setPageSize(Number(e.target.value))}
-            className="px-2 py-1 rounded border border-border bg-background text-sm"
+            aria-label="Rows per page"
+            className="rounded-lg border bg-card pl-3 pr-8 py-1.5 text-sm cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             {[25, 50, 100].map((size) => (
               <option key={size} value={size}>

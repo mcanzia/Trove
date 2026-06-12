@@ -53,21 +53,21 @@ export function BookCard({
     : whyReadIt.slice(0, TRUNCATE_AT).trimEnd() + '…'
 
   const statusBg = isAdding
-    ? 'bg-blue-50 border-blue-200 dark:bg-blue-950/30 dark:border-blue-800'
+    ? 'border-blue-200 dark:border-blue-800'
     : !book
-    ? 'bg-white border-border dark:bg-card'
+    ? 'border-border'
     : book.statusId === 3
-    ? 'bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800'      // Read
+    ? 'border-green-200 dark:border-green-800'       // Read
     : book.statusId === 4
-    ? 'bg-gray-200 border-gray-300 dark:bg-gray-800/60 dark:border-gray-600'          // Did not finish
+    ? 'border-border'                                 // Did not finish
     : book.statusId === 1
-    ? 'bg-blue-50 border-blue-200 dark:bg-blue-950/30 dark:border-blue-800'          // Want to read
+    ? 'border-blue-200 dark:border-blue-800'         // Want to read
     : book.statusId === 2
-    ? 'bg-yellow-50 border-yellow-200 dark:bg-yellow-950/30 dark:border-yellow-800'  // Reading
-    : 'bg-white border-border dark:bg-card'
+    ? 'border-amber-200 dark:border-amber-800'       // Reading
+    : 'border-border'
 
   return (
-    <div className={`flex flex-col gap-3 rounded-xl border shadow-sm hover:shadow-md transition-shadow overflow-hidden ${statusBg}`}>
+    <div className={`flex flex-col rounded-xl border bg-card overflow-hidden motion-safe:hover:-translate-y-0.5 hover:shadow-md transition-all duration-150 ${statusBg}`}>
 
       {/* Cover image (full-width banner if available) */}
       {coverUrl && (
@@ -81,114 +81,114 @@ export function BookCard({
         </div>
       )}
 
-      <div className="flex flex-col gap-3 p-4 pt-3">
+      <div className="flex flex-col gap-3 p-4 pt-3 flex-1">
 
-      {/* Title + date */}
-      <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-semibold text-foreground leading-snug">{title}</h3>
-        <span className="text-[11px] text-muted-foreground whitespace-nowrap shrink-0 mt-0.5">{addedDate}</span>
-      </div>
-
-      {/* Author + genre tags */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {author && <span className="text-xs text-muted-foreground">{author}</span>}
-        {displayGenres.map((g) => (
-          <span key={g} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
-            {g}
-          </span>
-        ))}
-      </div>
-
-      {/* Community rating from Hardcover */}
-      {communityRating != null && (
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground">Community</span>
-          <span className="text-[11px] font-semibold text-foreground tabular-nums">
-            {communityRating.toFixed(1)}
-          </span>
-          <span className="text-[10px] text-yellow-500">★</span>
-          <span className="text-[10px] text-muted-foreground">/ 5</span>
+        {/* Title + date */}
+        <div className="flex items-start justify-between gap-2">
+          <h3 className="text-sm font-semibold text-foreground leading-snug">{title}</h3>
+          <span className="text-[11px] text-muted-foreground whitespace-nowrap shrink-0 mt-0.5">{addedDate}</span>
         </div>
-      )}
 
-      {/* Hardcover row */}
-      <div className="flex items-center gap-3 pt-0.5">
-        {isAdding ? (
-          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-            </svg>
-            Adding…
-          </span>
-        ) : !book ? (
-          <button
-            disabled={isSearching}
-            onClick={onAddClick}
-            className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            {isSearching ? 'Searching…' : '+ Add to Hardcover'}
-          </button>
-        ) : (
-          <>
-            <StarRating value={book.rating} onChange={onRatingChange} />
-            <div className="h-3 w-px bg-border" />
-            {isUpdatingStatus ? (
-              <span className="text-xs text-muted-foreground animate-pulse">
-                {HARDCOVER_STATUS[book.statusId] ?? '…'}
-              </span>
-            ) : (
-              <select
-                value={book.statusId}
-                onChange={(e) => onStatusChange(Number(e.target.value))}
-                className="text-xs bg-transparent border-none cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none"
-              >
-                {Object.entries(HARDCOVER_STATUS).map(([id, label]) => (
-                  <option key={id} value={id}>{label}</option>
-                ))}
-              </select>
-            )}
-          </>
+        {/* Author + genre tags */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {author && <span className="text-xs text-muted-foreground">{author}</span>}
+          {displayGenres.map((g) => (
+            <span key={g} className="text-[10px] px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
+              {g}
+            </span>
+          ))}
+        </div>
+
+        {/* Community rating from Hardcover */}
+        {communityRating != null && (
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] text-muted-foreground">Community</span>
+            <span className="text-[11px] font-semibold text-foreground tabular-nums">
+              {communityRating.toFixed(1)}
+            </span>
+            <span className="text-[10px] text-gold">★</span>
+            <span className="text-[10px] text-muted-foreground">/ 5</span>
+          </div>
         )}
-      </div>
 
-      {/* Why read it */}
-      {whyReadIt && (
-        <div className="pt-0.5">
-          <p className="text-xs text-muted-foreground leading-relaxed">{displayedWhy}</p>
-          {isTruncatable && (
+        {/* Hardcover row */}
+        <div className="flex items-center gap-3 pt-0.5">
+          {isAdding ? (
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+              Adding…
+            </span>
+          ) : !book ? (
             <button
-              onClick={() => setExpanded((v) => !v)}
-              className="mt-1 flex items-center gap-0.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors cursor-pointer"
+              disabled={isSearching}
+              onClick={onAddClick}
+              className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              {expanded ? <><ChevronUp size={11} /> Show less</> : <><ChevronDown size={11} /> Show more</>}
+              {isSearching ? 'Searching…' : '+ Add to Hardcover'}
             </button>
+          ) : (
+            <>
+              <StarRating value={book.rating} onChange={onRatingChange} />
+              <div className="h-3 w-px bg-border" />
+              {isUpdatingStatus ? (
+                <span className="text-xs text-muted-foreground animate-pulse">
+                  {HARDCOVER_STATUS[book.statusId] ?? '…'}
+                </span>
+              ) : (
+                <select
+                  value={book.statusId}
+                  onChange={(e) => onStatusChange(Number(e.target.value))}
+                  className="text-xs bg-transparent border border-border rounded-lg pl-2 pr-6 py-1 cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {Object.entries(HARDCOVER_STATUS).map(([id, label]) => (
+                    <option key={id} value={id}>{label}</option>
+                  ))}
+                </select>
+              )}
+            </>
           )}
         </div>
-      )}
 
-      {/* Footer: platform + source */}
-      <div className="flex items-center gap-2 mt-auto pt-1 border-t border-black/10 dark:border-white/10">
-        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-          platform === 'reddit'
-            ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-            : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400'
-        }`}>
-          {platform}
-        </span>
-        {sourceUrl && (
-          <a
-            href={sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11px] text-primary hover:underline ml-auto"
-          >
-            {platform === 'reddit' ? 'Reddit →' : 'Instagram →'}
-          </a>
+        {/* Why read it */}
+        {whyReadIt && (
+          <div className="pt-0.5">
+            <p className="text-xs text-muted-foreground leading-relaxed">{displayedWhy}</p>
+            {isTruncatable && (
+              <button
+                onClick={() => setExpanded((v) => !v)}
+                className="mt-1 flex items-center gap-0.5 text-[11px] text-muted-foreground/60 hover:text-muted-foreground transition-colors cursor-pointer"
+              >
+                {expanded ? <><ChevronUp size={11} /> Show less</> : <><ChevronDown size={11} /> Show more</>}
+              </button>
+            )}
+          </div>
         )}
-      </div>
 
-      </div>{/* end padded content */}
+        {/* Footer: platform + source */}
+        <div className="flex items-center gap-2 mt-auto pt-1 border-t border-border/60">
+          <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+            platform === 'reddit'
+              ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+              : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400'
+          }`}>
+            {platform}
+          </span>
+          {sourceUrl && (
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-primary hover:underline ml-auto"
+            >
+              {platform === 'reddit' ? 'Reddit →' : 'Instagram →'}
+            </a>
+          )}
+        </div>
+
+      </div>
     </div>
   )
 }

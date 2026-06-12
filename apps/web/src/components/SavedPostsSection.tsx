@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { ExternalLink } from 'lucide-react'
+import { ExternalLink, ChevronDown } from 'lucide-react'
 import { usePostsByCategory } from '@/hooks/usePostsByCategory'
 import type { CategoryPost, Platform } from '@trove/shared'
 
@@ -9,24 +9,35 @@ function snippet(p: CategoryPost): string {
 }
 
 function PostLinkCard({ post }: { post: CategoryPost }) {
-  const platformCls =
+  const platformDot =
     post.platform === 'reddit'
-      ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-      : 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400'
+      ? 'bg-orange-400'
+      : 'bg-pink-400'
+
   return (
     <a
       href={post.url ?? '#'}
       target="_blank"
       rel="noopener noreferrer"
-      className="group flex flex-col gap-2 rounded-lg border border-border bg-card p-3 transition-colors hover:border-primary/50"
+      className="group flex flex-col gap-2 rounded-xl border border-border bg-card p-3 transition-all hover:border-ring/40 hover:shadow-sm"
     >
-      <div className="flex items-center gap-2 text-[11px]">
-        <span className={`rounded-full px-2 py-0.5 font-medium ${platformCls}`}>{post.platform}</span>
-        {post.media_type && <span className="text-muted-foreground">{post.media_type}</span>}
-        {post.owner && <span className="truncate text-muted-foreground">@{post.owner}</span>}
+      {/* Platform dot + meta */}
+      <div className="flex items-center gap-2">
+        <span className={`h-2 w-2 shrink-0 rounded-full ${platformDot}`} />
+        <span className="truncate text-xs text-muted-foreground">
+          {post.platform === 'reddit'
+            ? post.owner ? `r/${post.owner}` : 'Reddit'
+            : post.owner ? `@${post.owner}` : 'Instagram'}
+        </span>
       </div>
-      <p className="line-clamp-3 text-sm text-foreground">{snippet(post)}</p>
-      <span className="mt-auto inline-flex items-center gap-1 text-xs text-primary group-hover:underline">
+
+      {/* Truncated title */}
+      <p className="line-clamp-2 text-sm font-medium text-foreground leading-snug">
+        {snippet(post)}
+      </p>
+
+      {/* External link */}
+      <span className="mt-auto inline-flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground transition-colors">
         <ExternalLink size={12} /> Open original
       </span>
     </a>
@@ -58,14 +69,25 @@ export function SavedPostsSection({
 
   return (
     <div className="mt-10 border-t border-border pt-6">
+      {/* Collapsible heading */}
       <button
         onClick={() => setOpen((o) => !o)}
-        className="text-sm font-medium text-foreground transition-colors hover:text-primary"
+        className="flex items-center gap-2 text-sm font-semibold text-foreground transition-colors hover:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
+        aria-expanded={open}
       >
-        {open ? '▾' : '▸'} {thin.length} more saved post{thin.length === 1 ? '' : 's'} without extracted highlights
+        <ChevronDown
+          size={15}
+          className={`text-muted-foreground transition-transform duration-150 ${open ? 'rotate-180' : ''}`}
+        />
+        <span>Saved posts without extracted highlights</span>
+        {/* Count badge */}
+        <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
+          {thin.length}
+        </span>
       </button>
+
       {open && (
-        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 animate-in fade-in duration-150">
           {thin.map((p) => (
             <PostLinkCard key={p.post_id} post={p} />
           ))}

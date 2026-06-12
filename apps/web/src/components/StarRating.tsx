@@ -36,7 +36,7 @@ export function StarRating({ value, onChange, readonly = false, size = 14 }: Sta
             size={size}
             className={
               star <= displayed
-                ? 'fill-amber-400 text-amber-400'
+                ? 'fill-gold text-gold'
                 : 'fill-transparent text-muted-foreground/40'
             }
           />

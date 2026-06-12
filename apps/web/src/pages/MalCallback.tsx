@@ -25,26 +25,22 @@ export default function MalCallback() {
     if (hasRun.current) return
     hasRun.current = true
 
-    const code  = searchParams.get('code')
-    const state = searchParams.get('state')
+    const exchange = async () => {
+      const code  = searchParams.get('code')
+      const state = searchParams.get('state')
 
-    if (!code) {
-      setErrorMsg('No authorisation code returned from MyAnimeList.')
-      setStatus('error')
-      return
-    }
+      if (!code) {
+        throw new Error('No authorisation code returned from MyAnimeList.')
+      }
 
-    const stored = popVerifier()
-    if (!stored || stored.state !== state) {
-      setErrorMsg('OAuth state mismatch — possible CSRF. Please try again.')
-      setStatus('error')
-      return
-    }
+      const stored = popVerifier()
+      if (!stored || stored.state !== state) {
+        throw new Error('OAuth state mismatch — possible CSRF. Please try again.')
+      }
 
-    const redirectUri = import.meta.env.VITE_MAL_REDIRECT_URI as string
+      const redirectUri = import.meta.env.VITE_MAL_REDIRECT_URI as string
 
-    supabase.functions
-      .invoke('mal-proxy', {
+      const { data, error } = await supabase.functions.invoke('mal-proxy', {
         body: {
           action:       'exchange',
           code,
@@ -52,25 +48,29 @@ export default function MalCallback() {
           redirectUri,
         },
       })
-      .then(({ data, error }) => {
-        if (error || data?.error) {
-          setErrorMsg(error?.message ?? String(data?.error))
-          setStatus('error')
-          return
-        }
+      if (error || data?.error) {
+        throw new Error(error?.message ?? String(data?.error))
+      }
 
-        const tokens: MALTokens = {
-          accessToken:  data.access_token,
-          refreshToken: data.refresh_token,
-          expiresAt:    Date.now() + data.expires_in * 1000,
-        }
-        saveTokens(tokens)
+      const tokens: MALTokens = {
+        accessToken:  data.access_token,
+        refreshToken: data.refresh_token,
+        expiresAt:    Date.now() + data.expires_in * 1000,
+      }
+      saveTokens(tokens)
+    }
+
+    exchange()
+      .then(() => {
         setStatus('success')
-
         // Redirect to the Anime & Manga category page
         setTimeout(() => {
           navigate(`/category/${toSlug('Anime & Manga')}`, { replace: true })
         }, 800)
+      })
+      .catch((e: unknown) => {
+        setErrorMsg(e instanceof Error ? e.message : String(e))
+        setStatus('error')
       })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
