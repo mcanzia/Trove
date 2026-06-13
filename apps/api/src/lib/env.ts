@@ -13,6 +13,11 @@ const schema = z.object({
   // (/api/ai-usage/openrouter). Held server-side only — never sent to the client.
   OPENROUTER_API_KEY: z.string().min(1).optional(),
   OPENROUTER_DAILY_BUDGET_USD: z.coerce.number().positive().default(2),
+  // Optional: enables the dashboard's live Cloudflare Workers AI neuron-usage
+  // panel (/api/ai-usage/cloudflare). The token needs Account Analytics: Read
+  // (the inference token alone is not authorized for the GraphQL analytics API).
+  CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
+  CLOUDFLARE_API_TOKEN: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive().default(8787),
   CORS_ORIGINS: z
     .string()

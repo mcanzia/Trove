@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Activity, AlertTriangle, CheckCircle2, CircleDollarSign, Clock, Zap } from 'lucide-react'
-import { useAiUsage, useOpenRouterLive, type ProviderStatus, type ProviderUsage } from '@/hooks/useAiUsage'
+import { Activity, AlertTriangle, CheckCircle2, CircleDollarSign, Clock, Cpu, Zap } from 'lucide-react'
+import { useAiUsage, useOpenRouterLive, useCloudflareLive, type ProviderStatus, type ProviderUsage } from '@/hooks/useAiUsage'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
 import {
@@ -73,6 +73,18 @@ function SummaryCard({ icon: Icon, label, value, sub, isLoading, tone = 'default
   )
 }
 
+/** Compact "remaining/limit" headroom from captured rate-limit headers. */
+function headroom(p: ProviderUsage): { label: string; title: string } {
+  const r = p.rateLimit?.requests
+  const t = p.rateLimit?.tokens
+  if ((!r || r.remaining == null) && (!t || t.remaining == null)) return { label: '—', title: 'no rate-limit headers' }
+  const label = r && r.remaining != null ? `${r.remaining.toLocaleString()}${r.limit != null ? `/${r.limit.toLocaleString()}` : ''}` : '—'
+  const parts: string[] = []
+  if (r?.remaining != null) parts.push(`requests: ${r.remaining}${r.limit != null ? `/${r.limit}` : ''}${r.reset ? ` (resets ${r.reset})` : ''}`)
+  if (t?.remaining != null) parts.push(`tokens: ${t.remaining}${t.limit != null ? `/${t.limit}` : ''}${t.reset ? ` (resets ${t.reset})` : ''}`)
+  return { label, title: parts.join(' · ') }
+}
+
 // ---------------------------------------------------------------------------
 // Failure bar — ok / quota / budget / error proportions
 // ---------------------------------------------------------------------------
@@ -99,6 +111,7 @@ export default function AdminPage() {
   const [days, setDays] = useState<(typeof WINDOWS)[number]>(7)
   const { data, isLoading, error } = useAiUsage(days)
   const { data: live } = useOpenRouterLive()
+  const { data: cf } = useCloudflareLive()
 
   const overBudget = live?.available && live.budgetRemainingUsd != null && live.budgetRemainingUsd <= 0
 
@@ -130,7 +143,7 @@ export default function AdminPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
         <SummaryCard
           icon={Activity}
           label="Total AI calls"
@@ -157,6 +170,14 @@ export default function AdminPage() {
           label="OpenRouter balance"
           value={live?.available ? fmtUsd(live.balanceUsd) : '—'}
           sub={live?.available ? (live.isFreeTier ? 'free tier' : 'prepaid credits') : 'no live key'}
+        />
+        <SummaryCard
+          icon={Cpu}
+          label="Cloudflare neurons"
+          value={cf?.available && cf.neuronsToday != null ? cf.neuronsToday.toLocaleString() : '—'}
+          sub={cf?.available && cf.dailyFreeNeurons != null ? `of ${cf.dailyFreeNeurons.toLocaleString()}/day free` : cf?.error ? 'analytics scope needed' : 'no live key'}
+          tone={cf?.available && cf.neuronsRemaining != null && cf.neuronsRemaining <= 0 ? 'danger'
+            : cf?.available && cf.neuronsRemaining != null && cf.dailyFreeNeurons != null && cf.neuronsRemaining < cf.dailyFreeNeurons * 0.25 ? 'warn' : 'default'}
         />
       </div>
 
@@ -187,6 +208,7 @@ export default function AdminPage() {
                 <TableHead className="text-right">Calls</TableHead>
                 <TableHead className="text-right">Success</TableHead>
                 <TableHead>Mix</TableHead>
+                <TableHead className="text-right">Headroom</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">Last seen</TableHead>
                 <TableHead>Tasks</TableHead>
@@ -212,6 +234,9 @@ export default function AdminPage() {
                     </span>
                   </TableCell>
                   <TableCell><MixBar p={p} /></TableCell>
+                  <TableCell className="text-right tabular-nums text-muted-foreground" title={headroom(p).title}>
+                    {headroom(p).label}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">{p.costUsd > 0 ? fmtUsd(p.costUsd) : '—'}</TableCell>
                   <TableCell className="text-right text-muted-foreground tabular-nums">
                     <span className="inline-flex items-center gap-1"><Clock size={12} aria-hidden />{relTime(p.lastSeen)}</span>

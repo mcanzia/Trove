@@ -15,6 +15,9 @@ import { env } from '../lib/env.js'
  *                    client. Returns { available:false } when no key is set.
  */
 
+type RateLimitLeg = { limit: number | null; remaining: number | null; reset: string | null }
+type RateLimit = { requests?: RateLimitLeg; tokens?: RateLimitLeg }
+
 type UsageRow = {
   ts: string
   run_id: string | null
@@ -23,6 +26,7 @@ type UsageRow = {
   task: string
   status: string
   cost_usd: number | string | null
+  rate_limit: RateLimit | null
 }
 
 type Counts = { calls: number; ok: number; quota: number; budget: number; error: number; costUsd: number }
@@ -59,7 +63,7 @@ export const aiUsage = new Hono<AppEnv>()
     for (let from = 0; from < MAX_ROWS; from += PAGE) {
       const { data, error } = await supabase
         .from('ai_usage_events')
-        .select('ts, run_id, provider, model, task, status, cost_usd')
+        .select('ts, run_id, provider, model, task, status, cost_usd, rate_limit')
         .gte('ts', since)
         .order('ts', { ascending: false })
         .range(from, from + PAGE - 1)
@@ -69,7 +73,7 @@ export const aiUsage = new Hono<AppEnv>()
       if (page.length < PAGE) break
     }
 
-    const providers = new Map<string, Counts & { lastSeen: string; latestStatus: string; models: Set<string>; tasks: Set<string> }>()
+    const providers = new Map<string, Counts & { lastSeen: string; latestStatus: string; models: Set<string>; tasks: Set<string>; rateLimit: RateLimit | null }>()
     const byTask: Record<string, Counts> = { text: emptyCounts(), video: emptyCounts(), image: emptyCounts() }
     const byDay = new Map<string, Counts>()
     let totalCostUsd = 0
@@ -81,12 +85,14 @@ export const aiUsage = new Hono<AppEnv>()
       // rows are ts-desc, so the FIRST time we see a provider is its latest event
       let p = providers.get(r.provider)
       if (!p) {
-        p = { ...emptyCounts(), lastSeen: r.ts, latestStatus: r.status, models: new Set(), tasks: new Set() }
+        p = { ...emptyCounts(), lastSeen: r.ts, latestStatus: r.status, models: new Set(), tasks: new Set(), rateLimit: null }
         providers.set(r.provider, p)
       }
       tally(p, r.status, cost)
       if (r.model) p.models.add(r.model)
       p.tasks.add(r.task)
+      // rows are ts-desc → keep the most recent non-null rate-limit snapshot
+      if (!p.rateLimit && r.rate_limit) p.rateLimit = r.rate_limit
 
       const taskBucket = byTask[r.task] ?? (byTask[r.task] = emptyCounts())
       tally(taskBucket, r.status, cost)
@@ -110,6 +116,7 @@ export const aiUsage = new Hono<AppEnv>()
         latestStatus: p.latestStatus,
         models: [...p.models],
         tasks: [...p.tasks],
+        rateLimit: p.rateLimit,
         status: deriveStatus(p, p.latestStatus),
       }))
       .sort((a, b) => b.calls - a.calls)
@@ -161,6 +168,47 @@ export const aiUsage = new Hono<AppEnv>()
         dailyBudgetUsd: budget,
         budgetRemainingUsd: Number(Math.max(budget - spentToday, 0).toFixed(6)),
         isFreeTier: Boolean(keyData.is_free_tier),
+      })
+    } catch (e) {
+      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' }, 502)
+    }
+  })
+  .get('/cloudflare', async (c) => {
+    const acct = env.CLOUDFLARE_ACCOUNT_ID
+    const token = env.CLOUDFLARE_API_TOKEN
+    if (!acct || !token) return c.json({ available: false as const })
+
+    const FREE_DAILY_NEURONS = 10_000 // Cloudflare's free Workers AI allotment
+    const today = new Date().toISOString().slice(0, 10)
+    const since = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10)
+    // Verified working query (aiInferenceAdaptiveGroups · sum.totalNeurons · date).
+    const query = `query($a:String!,$since:Date!,$until:Date!){viewer{accounts(filter:{accountTag:$a}){aiInferenceAdaptiveGroups(limit:100,filter:{date_geq:$since,date_leq:$until},orderBy:[date_ASC]){count sum{totalNeurons} dimensions{date}}}}}`
+
+    try {
+      const res = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables: { a: acct, since, until: today } }),
+      })
+      const body = (await res.json()) as {
+        data?: { viewer?: { accounts?: { aiInferenceAdaptiveGroups?: { count: number; sum: { totalNeurons: number }; dimensions: { date: string } }[] }[] } }
+        errors?: { message: string }[]
+      }
+      if (body.errors?.length) {
+        // Most likely the token lacks Account Analytics: Read.
+        return c.json({ available: true as const, error: body.errors[0]?.message ?? 'analytics query failed' }, 502)
+      }
+      const groups = body.data?.viewer?.accounts?.[0]?.aiInferenceAdaptiveGroups ?? []
+      const byDay = groups.map((g) => ({ date: g.dimensions.date, neurons: g.sum.totalNeurons, requests: g.count }))
+      const todayNeurons = byDay.find((d) => d.date === today)?.neurons ?? 0
+
+      c.header('Cache-Control', 'max-age=300')
+      return c.json({
+        available: true as const,
+        dailyFreeNeurons: FREE_DAILY_NEURONS,
+        neuronsToday: todayNeurons,
+        neuronsRemaining: Math.max(FREE_DAILY_NEURONS - todayNeurons, 0),
+        byDay,
       })
     } catch (e) {
       return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' }, 502)

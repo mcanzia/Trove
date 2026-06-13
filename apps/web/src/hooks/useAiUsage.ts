@@ -3,6 +3,16 @@ import { api } from '@/lib/api'
 
 export type ProviderStatus = 'healthy' | 'throttled' | 'exhausted'
 
+export interface RateLimitLeg {
+  limit: number | null
+  remaining: number | null
+  reset: string | null
+}
+export interface RateLimit {
+  requests?: RateLimitLeg
+  tokens?: RateLimitLeg
+}
+
 export interface ProviderUsage {
   provider: string
   calls: number
@@ -16,6 +26,7 @@ export interface ProviderUsage {
   latestStatus: string
   models: string[]
   tasks: string[]
+  rateLimit: RateLimit | null
   status: ProviderStatus
 }
 
@@ -80,5 +91,27 @@ export function useOpenRouterLive() {
     },
     staleTime: 60_000,
     refetchInterval: 60_000,
+  })
+}
+
+export interface CloudflareLive {
+  available: boolean
+  error?: string
+  dailyFreeNeurons?: number
+  neuronsToday?: number
+  neuronsRemaining?: number
+  byDay?: { date: string; neurons: number; requests: number }[]
+}
+
+/** Live Cloudflare Workers AI neuron usage vs the 10k/day free allotment. */
+export function useCloudflareLive() {
+  return useQuery<CloudflareLive>({
+    queryKey: ['ai-usage', 'cloudflare'],
+    queryFn: async () => {
+      const res = await api.api['ai-usage'].cloudflare.$get()
+      return (await res.json()) as CloudflareLive
+    },
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
   })
 }
