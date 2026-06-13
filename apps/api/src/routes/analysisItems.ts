@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { supabase } from '../lib/supabase.js'
+import type { AppEnv } from '../lib/context.js'
 import type { AnalysisItem } from '../types.js'
 
 const POST_COLUMNS = 'url, year, timestamp, caption, owner, owner_fullname, platform'
@@ -17,13 +17,13 @@ const querySchema = z.object({
  *
  * Migrated from Trove's useAnalysisItems hook.
  */
-export const analysisItems = new Hono().get(
+export const analysisItems = new Hono<AppEnv>().get(
   '/',
   zValidator('query', querySchema),
   async (c) => {
     const { category, platform } = c.req.valid('query')
 
-    const base = supabase
+    const base = c.get('supabase')
       .from('analysis_items')
       .select(`*, posts(${POST_COLUMNS})`)
       .eq('category_name', category)

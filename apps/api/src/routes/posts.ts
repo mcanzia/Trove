@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { supabase } from '../lib/supabase.js'
+import type { AppEnv } from '../lib/context.js'
 import type { CategoryPost, Platform } from '@trove/shared'
 
 const POST_COLS = 'post_id, platform, url, title, caption, owner, owner_fullname, media_type, timestamp'
@@ -16,10 +16,10 @@ const querySchema = z.object({
  * post_categories), regardless of whether it produced an extracted item. Powers
  * the "surface every saved post" link-out cards so nothing saved is hidden.
  */
-export const posts = new Hono().get('/', zValidator('query', querySchema), async (c) => {
+export const posts = new Hono<AppEnv>().get('/', zValidator('query', querySchema), async (c) => {
   const { category, platform } = c.req.valid('query')
 
-  const base = supabase
+  const base = c.get('supabase')
     .from('post_categories')
     .select(`post_id, platform, posts(${POST_COLS})`)
     .eq('category_name', category)

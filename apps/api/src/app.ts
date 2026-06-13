@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { env } from './lib/env.js'
+import type { AppEnv } from './lib/context.js'
+import { requireAuth } from './middleware/auth.js'
 import { recipes } from './routes/recipes.js'
 import { categories } from './routes/categories.js'
 import { analysisItems } from './routes/analysisItems.js'
@@ -9,18 +11,23 @@ import { enrichments } from './routes/enrichments.js'
 import { posts } from './routes/posts.js'
 import { stats } from './routes/stats.js'
 
-export const app = new Hono()
+export const app = new Hono<AppEnv>()
 
 app.use('*', logger())
 app.use(
   '/api/*',
   cors({
     origin: env.CORS_ORIGINS,
-    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   }),
 )
 
-// Health check (handy for uptime probes / deploy smoke tests).
+// Every /api/* route requires a valid Supabase session (CORS preflight runs and
+// returns first, so OPTIONS is unaffected). Sets c.var.supabase + c.var.userId.
+app.use('/api/*', requireAuth)
+
+// Health check (handy for uptime probes / deploy smoke tests) — left unauthenticated.
 app.get('/health', (c) => c.json({ ok: true, service: 'trove-backend' }))
 
 // Mounting routes on a const chain keeps the inferred type intact for Hono RPC.

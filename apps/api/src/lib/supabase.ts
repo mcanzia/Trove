@@ -2,13 +2,24 @@ import { createClient } from '@supabase/supabase-js'
 import { env } from './env.js'
 
 /**
- * Server-side Supabase client.
- *
- * Reads use the anon key (RLS allows anon read on the tables Trove exposes),
- * matching the frontend's current access. If/when we add write or admin
- * endpoints, prefer a separate service-role client created on demand rather
- * than widening this one — keeps read paths from accidentally bypassing RLS.
+ * Anon Supabase client, used by the auth middleware ONLY to verify a bearer JWT
+ * (supabase.auth.getUser). It is no longer used for data reads: after the
+ * multi-tenant RLS migration anon has no row access, so every data query runs
+ * under a logged-in user's identity via userClient() below.
  */
 export const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
   auth: { persistSession: false },
 })
+
+/**
+ * Per-request Supabase client bound to a user's access token. The JWT rides on
+ * every PostgREST call, so RLS resolves auth.uid() to that user and scopes all
+ * reads/writes to their own rows. Created fresh per request (cheap) — never
+ * cached, since each carries a different identity.
+ */
+export function userClient(accessToken: string) {
+  return createClient(env.SUPABASE_URL, env.SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${accessToken}` } },
+  })
+}

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { supabase } from '../lib/supabase.js'
+import type { AppEnv } from '../lib/context.js'
 
 /**
  * GET / — per-category item counts plus an overall total.
@@ -8,7 +8,8 @@ import { supabase } from '../lib/supabase.js'
  * counts server-side, returning { total, perCategory }. Cached for 5 minutes;
  * the web client (useStats) mirrors that with a 5-minute staleTime.
  */
-export const stats = new Hono().get('/', async (c) => {
+export const stats = new Hono<AppEnv>().get('/', async (c) => {
+  const supabase = c.get('supabase')
   // PostgREST caps responses at 1000 rows, so page through with .range().
   const PAGE = 1000
   const rows: { category_name: string | null }[] = []

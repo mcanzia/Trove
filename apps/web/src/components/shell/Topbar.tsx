@@ -1,8 +1,9 @@
 import { Link, useParams } from 'react-router-dom'
-import { Menu, Search, Sun, Moon } from 'lucide-react'
+import { Menu, Search, Sun, Moon, LogOut } from 'lucide-react'
 import { useCategories } from '@/hooks/useCategories'
 import { toSlug } from '@/lib/utils'
 import { useTheme } from '@/components/shell/ThemeProvider'
+import { useAuth } from '@/lib/auth'
 
 interface TopbarProps {
   onOpenSidebar: () => void
@@ -18,6 +19,7 @@ export function Topbar({ onOpenSidebar, onOpenPalette }: TopbarProps) {
   const { slug, postId } = useParams()
   const { data: categories } = useCategories()
   const { resolved, toggle } = useTheme()
+  const { signOut } = useAuth()
 
   const category = slug ? categories?.find((c) => toSlug(c.name) === slug) : undefined
 
@@ -62,13 +64,13 @@ export function Topbar({ onOpenSidebar, onOpenPalette }: TopbarProps) {
         })}
       </nav>
 
-      {/* Mobile-only controls (desktop has search + theme in the sidebar). */}
-      <div className="ml-auto flex items-center gap-1 lg:hidden">
+      <div className="ml-auto flex items-center gap-1">
+        {/* Mobile-only: search + theme (desktop has these in the sidebar). */}
         <button
           type="button"
           onClick={onOpenPalette}
           aria-label="Search"
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden"
         >
           <Search size={17} aria-hidden />
         </button>
@@ -76,9 +78,19 @@ export function Topbar({ onOpenSidebar, onOpenPalette }: TopbarProps) {
           type="button"
           onClick={toggle}
           aria-label={resolved === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:hidden"
         >
           {resolved === 'dark' ? <Moon size={17} aria-hidden /> : <Sun size={17} aria-hidden />}
+        </button>
+        {/* Sign out — always available. */}
+        <button
+          type="button"
+          onClick={() => void signOut()}
+          aria-label="Sign out"
+          title="Sign out"
+          className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <LogOut size={17} aria-hidden />
         </button>
       </div>
     </header>

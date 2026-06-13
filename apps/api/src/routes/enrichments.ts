@@ -1,8 +1,8 @@
 import { Hono } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
-import { supabase } from '../lib/supabase.js'
-import { supabaseAdmin } from '../lib/supabaseAdmin.js'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import type { AppEnv } from '../lib/context.js'
 import type {
   BGGLinkData,
   TMDBLink,
@@ -16,17 +16,16 @@ import type {
  * Enrichment-table reads — one endpoint per *_links / lookup table. Each returns
  * a flat array of (value & key); the frontend hooks build their Maps from it.
  *
- * Migrated from the read queries in useBGGLinks / useTMDB / useIGDB / useMAL /
- * useHardcoverBooks / useInstagramStorefronts / useTravelLocations. The write
- * mutations and external API/OAuth proxies in those files are intentionally NOT
- * migrated here.
+ * All queries (reads AND writes) run on the per-request user client from the
+ * auth middleware, so RLS scopes every row to the requesting user. Writes also
+ * stamp user_id (required by the RLS with-check policy on insert).
  */
 
 type Row = Record<string, unknown>
 
-/** Select all rows of a table; throws on error (caught per-route below). */
-async function selectAll(table: string, columns: string): Promise<Row[]> {
-  const { data, error } = await supabase.from(table).select(columns)
+/** Select all rows of a table on the caller's client; throws on error. */
+async function selectAll(sb: SupabaseClient, table: string, columns: string): Promise<Row[]> {
+  const { data, error } = await sb.from(table).select(columns)
   if (error) throw new Error(error.message)
   return (data ?? []) as unknown as Row[]
 }
@@ -72,10 +71,11 @@ const hardcoverUpsertBody = z.object({
   releaseYear: z.number().nullish(),
 })
 
-export const enrichments = new Hono()
+export const enrichments = new Hono<AppEnv>()
   .get('/bgg', async (c) => {
     try {
       const rows = await selectAll(
+        c.get('supabase'),
         'bgg_links',
         'analysis_item_id, bgg_game_id, game_title, cover_url, thumbnail_url, bgg_rating, bgg_weight, year_published, min_players, max_players, playing_time, categories, mechanics',
       )
@@ -102,6 +102,7 @@ export const enrichments = new Hono()
   .get('/tmdb', async (c) => {
     try {
       const rows = await selectAll(
+        c.get('supabase'),
         'tmdb_links',
         'analysis_item_id, tmdb_id, media_type, tmdb_title, personal_score, poster_url, tmdb_rating, genres, release_year',
       )
@@ -124,6 +125,7 @@ export const enrichments = new Hono()
   .get('/igdb', async (c) => {
     try {
       const rows = await selectAll(
+        c.get('supabase'),
         'igdb_links',
         'analysis_item_id, igdb_game_id, game_title, personal_score, cover_url, igdb_rating, genres, platforms, release_year',
       )
@@ -146,6 +148,7 @@ export const enrichments = new Hono()
   .get('/mal', async (c) => {
     try {
       const rows = await selectAll(
+        c.get('supabase'),
         'mal_links',
         'analysis_item_id, mal_anime_id, series_title, cover_url, mal_score, genres, release_year, num_episodes',
       )
@@ -167,6 +170,7 @@ export const enrichments = new Hono()
   .get('/hardcover', async (c) => {
     try {
       const rows = await selectAll(
+        c.get('supabase'),
         'hardcover_links',
         'analysis_item_id, hardcover_book_id, cover_url, hc_community_rating, genres, release_year',
       )
@@ -185,7 +189,7 @@ export const enrichments = new Hono()
   })
   .get('/instagram-storefronts', async (c) => {
     try {
-      const rows = await selectAll('instagram_storefronts', 'owner, storefront_url')
+      const rows = await selectAll(c.get('supabase'), 'instagram_storefronts', 'owner, storefront_url')
       const result: { owner: string; storefrontUrl: string }[] = rows.map((r) => ({
         owner: r.owner as string,
         storefrontUrl: r.storefront_url as string,
@@ -198,6 +202,7 @@ export const enrichments = new Hono()
   .get('/travel-locations', async (c) => {
     try {
       const rows = await selectAll(
+        c.get('supabase'),
         'travel_locations',
         'analysis_item_id, lat, lng, label, type',
       )
@@ -220,7 +225,7 @@ export const enrichments = new Hono()
   .delete('/bgg/:analysisItemId', zValidator('param', idParam), async (c) => {
     const { analysisItemId } = c.req.valid('param')
     try {
-      const { error } = await supabaseAdmin()
+      const { error } = await c.get('supabase')
         .from('bgg_links')
         .delete()
         .eq('analysis_item_id', analysisItemId)
@@ -240,8 +245,9 @@ export const enrichments = new Hono()
       const { analysisItemId } = c.req.valid('param')
       const b = c.req.valid('json')
       try {
-        const { error } = await supabaseAdmin().from('tmdb_links').upsert({
+        const { error } = await c.get('supabase').from('tmdb_links').upsert({
           analysis_item_id: analysisItemId,
+          user_id: c.get('userId'),
           tmdb_id: b.tmdbId,
           media_type: b.mediaType,
           tmdb_title: b.tmdbTitle ?? null,
@@ -260,7 +266,7 @@ export const enrichments = new Hono()
   .delete('/tmdb/:analysisItemId', zValidator('param', idParam), async (c) => {
     const { analysisItemId } = c.req.valid('param')
     try {
-      const { error } = await supabaseAdmin()
+      const { error } = await c.get('supabase')
         .from('tmdb_links')
         .delete()
         .eq('analysis_item_id', analysisItemId)
@@ -278,7 +284,7 @@ export const enrichments = new Hono()
       const { analysisItemId } = c.req.valid('param')
       const { personalScore } = c.req.valid('json')
       try {
-        const { error } = await supabaseAdmin()
+        const { error } = await c.get('supabase')
           .from('tmdb_links')
           .update({ personal_score: personalScore })
           .eq('analysis_item_id', analysisItemId)
@@ -299,8 +305,9 @@ export const enrichments = new Hono()
       const { analysisItemId } = c.req.valid('param')
       const b = c.req.valid('json')
       try {
-        const { error } = await supabaseAdmin().from('igdb_links').upsert({
+        const { error } = await c.get('supabase').from('igdb_links').upsert({
           analysis_item_id: analysisItemId,
+          user_id: c.get('userId'),
           igdb_game_id: b.igdbGameId,
           game_title: b.gameTitle ?? null,
           cover_url: b.coverUrl ?? null,
@@ -319,7 +326,7 @@ export const enrichments = new Hono()
   .delete('/igdb/:analysisItemId', zValidator('param', idParam), async (c) => {
     const { analysisItemId } = c.req.valid('param')
     try {
-      const { error } = await supabaseAdmin()
+      const { error } = await c.get('supabase')
         .from('igdb_links')
         .delete()
         .eq('analysis_item_id', analysisItemId)
@@ -337,7 +344,7 @@ export const enrichments = new Hono()
       const { analysisItemId } = c.req.valid('param')
       const { personalScore } = c.req.valid('json')
       try {
-        const { error } = await supabaseAdmin()
+        const { error } = await c.get('supabase')
           .from('igdb_links')
           .update({ personal_score: personalScore })
           .eq('analysis_item_id', analysisItemId)
@@ -358,8 +365,9 @@ export const enrichments = new Hono()
       const { analysisItemId } = c.req.valid('param')
       const b = c.req.valid('json')
       try {
-        const { error } = await supabaseAdmin().from('mal_links').upsert({
+        const { error } = await c.get('supabase').from('mal_links').upsert({
           analysis_item_id: analysisItemId,
+          user_id: c.get('userId'),
           mal_anime_id: b.malAnimeId,
           series_title: b.seriesTitle ?? null,
         })
@@ -373,7 +381,7 @@ export const enrichments = new Hono()
   .delete('/mal/:analysisItemId', zValidator('param', idParam), async (c) => {
     const { analysisItemId } = c.req.valid('param')
     try {
-      const { error } = await supabaseAdmin()
+      const { error } = await c.get('supabase')
         .from('mal_links')
         .delete()
         .eq('analysis_item_id', analysisItemId)
@@ -393,8 +401,9 @@ export const enrichments = new Hono()
       const { analysisItemId } = c.req.valid('param')
       const b = c.req.valid('json')
       try {
-        const { error } = await supabaseAdmin().from('hardcover_links').upsert({
+        const { error } = await c.get('supabase').from('hardcover_links').upsert({
           analysis_item_id: analysisItemId,
+          user_id: c.get('userId'),
           hardcover_book_id: b.hardcoverBookId,
           book_title: b.bookTitle ?? null,
           cover_url: b.coverUrl ?? null,
@@ -412,7 +421,7 @@ export const enrichments = new Hono()
   .delete('/hardcover/:analysisItemId', zValidator('param', idParam), async (c) => {
     const { analysisItemId } = c.req.valid('param')
     try {
-      const { error } = await supabaseAdmin()
+      const { error } = await c.get('supabase')
         .from('hardcover_links')
         .delete()
         .eq('analysis_item_id', analysisItemId)

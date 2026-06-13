@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { supabase } from '../lib/supabase.js'
+import type { AppEnv } from '../lib/context.js'
 import type { Category } from '../types.js'
 
 /**
@@ -7,10 +7,11 @@ import type { Category } from '../types.js'
  *
  * Migrated from Trove's useCategories hook. output_fields / group_by are stored
  * as JSON (sometimes as a JSON string); we normalize them server-side so the
- * client receives ready-to-use values.
+ * client receives ready-to-use values. `categories` is global reference data,
+ * readable by any authenticated user (no per-user scoping).
  */
-export const categories = new Hono().get('/', async (c) => {
-  const { data, error } = await supabase
+export const categories = new Hono<AppEnv>().get('/', async (c) => {
+  const { data, error } = await c.get('supabase')
     .from('categories')
     .select('*')
     .order('name')
