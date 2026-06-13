@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { supabase } from '../lib/supabase.js'
+import type { AppEnv } from '../lib/context.js'
 import type { AnalysisItem, RecipeCard, RecipeResponse } from '../types.js'
 
 const FOOD_CATEGORY = 'Food & Cooking'
@@ -37,8 +37,9 @@ function toRecipeCard(row: Record<string, unknown>): RecipeCard {
  * supabase-js queries from the browser. Addressed by source_post_id, which is
  * stable across re-analysis.
  */
-export const recipes = new Hono()
+export const recipes = new Hono<AppEnv>()
   .get('/', async (c) => {
+    const supabase = c.get('supabase')
     const { data, error } = await supabase
       .from('recipe_cards')
       .select(RECIPE_CARD_COLUMNS)
@@ -55,6 +56,7 @@ export const recipes = new Hono()
     return c.json(result)
   })
   .get('/:postId', async (c) => {
+  const supabase = c.get('supabase')
   const postId = c.req.param('postId')
   if (!postId) {
     return c.json({ error: 'postId is required' }, 400)
