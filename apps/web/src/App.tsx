@@ -23,9 +23,15 @@ function RequireAuth() {
 }
 
 export default function App() {
+  const { session, loading } = useAuth()
   return (
     <Routes>
-      <Route path="/login" element={<Login />} />
+      {/* Once authenticated, /login bounces home — covers password sign-in, which
+          (unlike magic link) doesn't route through /auth/callback. */}
+      <Route
+        path="/login"
+        element={!loading && session ? <Navigate to="/" replace /> : <Login />}
+      />
       <Route path="/auth/callback" element={<AuthCallback />} />
 
       {/* Everything below requires a session. */}
