@@ -5,8 +5,9 @@
 -- Idempotent — re-running backfills only still-NULL rows; SET NOT NULL is a no-op
 -- once satisfied. Pass the owner's login email:
 --
+-- Pass owner_email UNQUOTED — the SQL uses :'owner_email', which quotes it for you:
 --   psql "postgresql://postgres:<pw>@db.<ref>.supabase.co:5432/postgres?sslmode=require" \
---        -v owner_email="'you@example.com'" -f apps/api/sql/auth_multitenant_backfill.sql
+--        -v owner_email=you@example.com -f apps/api/sql/auth_multitenant_backfill.sql
 
 \set ON_ERROR_STOP on
 
