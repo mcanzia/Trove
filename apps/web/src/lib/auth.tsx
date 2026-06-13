@@ -3,17 +3,19 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase } from '@/lib/supabase'
 
 /**
- * App-wide auth state, backed by Supabase Auth (magic link).
+ * App-wide auth state, backed by Supabase Auth.
  *
- * The Supabase client persists the session and auto-detects the token in the
- * magic-link callback URL, so we just mirror `getSession()` + `onAuthStateChange`
- * into React state. The session's access_token is what apps/api requires on every
- * request (attached in lib/api.ts) and what RLS resolves to auth.uid().
+ * Two sign-in paths: a passwordless magic link, and email+password as a backup
+ * (the built-in email service rate-limits magic links to ~2/hour). Password
+ * sign-in sends no email, so it isn't rate-limited. Either path yields the same
+ * session; its access_token is what apps/api requires per request (attached in
+ * lib/api.ts) and what RLS resolves to auth.uid().
  */
 type AuthState = {
   session: Session | null
   loading: boolean
   signInWithEmail: (email: string) => Promise<{ error: string | null }>
+  signInWithPassword: (email: string, password: string) => Promise<{ error: string | null }>
   signOut: () => Promise<void>
 }
 
@@ -42,12 +44,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { error: error?.message ?? null }
   }
 
+  async function signInWithPassword(email: string, password: string) {
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    return { error: error?.message ?? null }
+  }
+
   async function signOut() {
     await supabase.auth.signOut()
   }
 
   return (
-    <AuthContext.Provider value={{ session, loading, signInWithEmail, signOut }}>
+    <AuthContext.Provider
+      value={{ session, loading, signInWithEmail, signInWithPassword, signOut }}
+    >
       {children}
     </AuthContext.Provider>
   )
