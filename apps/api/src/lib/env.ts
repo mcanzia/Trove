@@ -9,6 +9,10 @@ const schema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  // Optional: enables the admin dashboard's live OpenRouter balance/budget panel
+  // (/api/ai-usage/openrouter). Held server-side only — never sent to the client.
+  OPENROUTER_API_KEY: z.string().min(1).optional(),
+  OPENROUTER_DAILY_BUDGET_USD: z.coerce.number().positive().default(2),
   PORT: z.coerce.number().int().positive().default(8787),
   CORS_ORIGINS: z
     .string()

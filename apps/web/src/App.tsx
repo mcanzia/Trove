@@ -4,6 +4,7 @@ import { useAuth } from '@/lib/auth'
 import HomePage from '@/pages/HomePage'
 import CategoryPage from '@/pages/CategoryPage'
 import RecipePage from '@/pages/RecipePage'
+import AdminPage from '@/pages/AdminPage'
 import MalCallback from '@/pages/MalCallback'
 import Login from '@/pages/Login'
 import AuthCallback from '@/pages/AuthCallback'
@@ -38,6 +39,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>
           <Route path="/" element={<HomePage />} />
+          <Route path="/admin" element={<AdminPage />} />
           <Route path="/category/:slug" element={<CategoryPage />} />
           <Route path="/category/:slug/recipe/:postId" element={<RecipePage />} />
         </Route>

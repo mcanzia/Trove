@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Gem, Search, Sun, Moon } from 'lucide-react'
+import { Gem, Search, Sun, Moon, Gauge } from 'lucide-react'
 import { useCategories } from '@/hooks/useCategories'
 import { useStats } from '@/hooks/useStats'
 import { getCategoryTheme } from '@/lib/categoryConfig'
@@ -102,14 +102,27 @@ export function Sidebar({ onOpenPalette, onNavigate }: SidebarProps) {
         <span className="text-[11px] text-muted-foreground">
           {stats ? `${stats.total.toLocaleString()} items saved` : ''}
         </span>
-        <button
-          type="button"
-          onClick={toggle}
-          aria-label={resolved === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-        >
-          {resolved === 'dark' ? <Moon size={16} aria-hidden /> : <Sun size={16} aria-hidden />}
-        </button>
+        <div className="flex items-center gap-1">
+          <Link
+            to="/admin"
+            onClick={onNavigate}
+            aria-label="AI usage dashboard"
+            aria-current={location.pathname === '/admin' ? 'page' : undefined}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring ${
+              location.pathname === '/admin' ? 'text-gold' : 'text-muted-foreground'
+            }`}
+          >
+            <Gauge size={16} aria-hidden />
+          </Link>
+          <button
+            type="button"
+            onClick={toggle}
+            aria-label={resolved === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          >
+            {resolved === 'dark' ? <Moon size={16} aria-hidden /> : <Sun size={16} aria-hidden />}
+          </button>
+        </div>
       </div>
     </div>
   )
