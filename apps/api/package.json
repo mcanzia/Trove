@@ -24,6 +24,7 @@
     "@supabase/supabase-js": "^2.106.1",
     "@trove/shared": "workspace:*",
     "dotenv": "^16.4.7",
+    "google-auth-library": "^10.7.0",
     "hono": "^4.7.10",
     "zod": "^3.24.1"
   },

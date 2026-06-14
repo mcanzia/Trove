@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import type { AppEnv } from '../lib/context.js'
 import { env } from '../lib/env.js'
+import { fetchGeminiUsage, geminiMonitoringAvailable } from '../lib/geminiMonitoring.js'
 
 /**
  * Admin dashboard data for AI model usage/exhaustion.
@@ -15,6 +16,9 @@ import { env } from '../lib/env.js'
  *                    client. Returns { available:false } when no key is set.
  */
 
+type RateLimitLeg = { limit: number | null; remaining: number | null; reset: string | null }
+type RateLimit = { requests?: RateLimitLeg; tokens?: RateLimitLeg }
+
 type UsageRow = {
   ts: string
   run_id: string | null
@@ -23,6 +27,7 @@ type UsageRow = {
   task: string
   status: string
   cost_usd: number | string | null
+  rate_limit: RateLimit | null
 }
 
 type Counts = { calls: number; ok: number; quota: number; budget: number; error: number; costUsd: number }
@@ -46,6 +51,21 @@ function deriveStatus(c: Counts, latestStatus: string): 'healthy' | 'throttled' 
   return 'healthy'
 }
 
+// Canonical roster of every provider the pipeline can call (mirrors the ladders
+// in SavedPosts llm_utils.py + the vision paths). Providers with no telemetry in
+// the window are still listed as `idle` rows so the dashboard shows the full
+// fleet, not just whatever ran recently.
+const KNOWN_PROVIDERS: { provider: string; models: string[]; tasks: string[] }[] = [
+  { provider: 'groq', models: ['llama-3.3-70b-versatile', 'whisper-large-v3-turbo', 'meta-llama/llama-4-scout-17b-16e-instruct'], tasks: ['text', 'video'] },
+  { provider: 'cerebras', models: ['zai-glm-4.7'], tasks: ['text'] },
+  { provider: 'sambanova', models: ['Meta-Llama-3.3-70B-Instruct'], tasks: ['text'] },
+  { provider: 'cloudflare', models: ['@cf/meta/llama-3.3-70b-instruct-fp8-fast'], tasks: ['text'] },
+  { provider: 'github', models: ['openai/gpt-4o-mini'], tasks: ['text'] },
+  { provider: 'gemini', models: ['gemini-2.5-flash', 'gemini-3.1-flash-lite'], tasks: ['text', 'video', 'image'] },
+  { provider: 'openrouter', models: ['nvidia/nemotron-nano-12b-v2-vl:free', 'qwen/qwen2.5-vl-72b-instruct'], tasks: ['video', 'image'] },
+  { provider: 'claude-cli', models: ['claude-haiku-4-5'], tasks: ['text'] },
+]
+
 export const aiUsage = new Hono<AppEnv>()
   .get('/', zValidator('query', z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })), async (c) => {
     const { days } = c.req.valid('query')
@@ -59,7 +79,7 @@ export const aiUsage = new Hono<AppEnv>()
     for (let from = 0; from < MAX_ROWS; from += PAGE) {
       const { data, error } = await supabase
         .from('ai_usage_events')
-        .select('ts, run_id, provider, model, task, status, cost_usd')
+        .select('ts, run_id, provider, model, task, status, cost_usd, rate_limit')
         .gte('ts', since)
         .order('ts', { ascending: false })
         .range(from, from + PAGE - 1)
@@ -69,7 +89,7 @@ export const aiUsage = new Hono<AppEnv>()
       if (page.length < PAGE) break
     }
 
-    const providers = new Map<string, Counts & { lastSeen: string; latestStatus: string; models: Set<string>; tasks: Set<string> }>()
+    const providers = new Map<string, Counts & { lastSeen: string; latestStatus: string; models: Set<string>; tasks: Set<string>; rateLimit: RateLimit | null }>()
     const byTask: Record<string, Counts> = { text: emptyCounts(), video: emptyCounts(), image: emptyCounts() }
     const byDay = new Map<string, Counts>()
     let totalCostUsd = 0
@@ -81,12 +101,14 @@ export const aiUsage = new Hono<AppEnv>()
       // rows are ts-desc, so the FIRST time we see a provider is its latest event
       let p = providers.get(r.provider)
       if (!p) {
-        p = { ...emptyCounts(), lastSeen: r.ts, latestStatus: r.status, models: new Set(), tasks: new Set() }
+        p = { ...emptyCounts(), lastSeen: r.ts, latestStatus: r.status, models: new Set(), tasks: new Set(), rateLimit: null }
         providers.set(r.provider, p)
       }
       tally(p, r.status, cost)
       if (r.model) p.models.add(r.model)
       p.tasks.add(r.task)
+      // rows are ts-desc → keep the most recent non-null rate-limit snapshot
+      if (!p.rateLimit && r.rate_limit) p.rateLimit = r.rate_limit
 
       const taskBucket = byTask[r.task] ?? (byTask[r.task] = emptyCounts())
       tally(taskBucket, r.status, cost)
@@ -96,7 +118,14 @@ export const aiUsage = new Hono<AppEnv>()
       tally(d, r.status, cost)
     }
 
-    const providerList = [...providers.entries()]
+    type ProviderRow = {
+      provider: string; calls: number; ok: number; quota: number; budget: number; error: number
+      successRate: number; costUsd: number; lastSeen: string | null; latestStatus: string
+      models: string[]; tasks: string[]; rateLimit: RateLimit | null
+      status: 'healthy' | 'throttled' | 'exhausted' | 'idle'
+    }
+
+    const used: ProviderRow[] = [...providers.entries()]
       .map(([provider, p]) => ({
         provider,
         calls: p.calls,
@@ -106,13 +135,27 @@ export const aiUsage = new Hono<AppEnv>()
         error: p.error,
         successRate: p.calls ? p.ok / p.calls : 0,
         costUsd: Number(p.costUsd.toFixed(6)),
-        lastSeen: p.lastSeen,
+        lastSeen: p.lastSeen as string | null,
         latestStatus: p.latestStatus,
         models: [...p.models],
         tasks: [...p.tasks],
+        rateLimit: p.rateLimit,
         status: deriveStatus(p, p.latestStatus),
       }))
       .sort((a, b) => b.calls - a.calls)
+
+    // Append every known provider that produced no telemetry in the window as an
+    // `idle` empty-state row, so the full fleet is always visible.
+    const seen = new Set(used.map((p) => p.provider))
+    const idle: ProviderRow[] = KNOWN_PROVIDERS.filter((k) => !seen.has(k.provider)).map((k) => ({
+      provider: k.provider,
+      calls: 0, ok: 0, quota: 0, budget: 0, error: 0,
+      successRate: 0, costUsd: 0,
+      lastSeen: null, latestStatus: 'idle',
+      models: k.models, tasks: k.tasks, rateLimit: null,
+      status: 'idle' as const,
+    }))
+    const providerList = [...used, ...idle]
 
     const byDayList = [...byDay.entries()]
       .map(([date, d]) => ({ date, calls: d.calls, ok: d.ok, quota: d.quota, budget: d.budget, error: d.error, costUsd: Number(d.costUsd.toFixed(6)) }))
@@ -164,5 +207,56 @@ export const aiUsage = new Hono<AppEnv>()
       })
     } catch (e) {
       return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' }, 502)
+    }
+  })
+  .get('/cloudflare', async (c) => {
+    const acct = env.CLOUDFLARE_ACCOUNT_ID
+    const token = env.CLOUDFLARE_API_TOKEN
+    if (!acct || !token) return c.json({ available: false as const })
+
+    const FREE_DAILY_NEURONS = 10_000 // Cloudflare's free Workers AI allotment
+    const today = new Date().toISOString().slice(0, 10)
+    const since = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10)
+    // Verified working query (aiInferenceAdaptiveGroups · sum.totalNeurons · date).
+    const query = `query($a:String!,$since:Date!,$until:Date!){viewer{accounts(filter:{accountTag:$a}){aiInferenceAdaptiveGroups(limit:100,filter:{date_geq:$since,date_leq:$until},orderBy:[date_ASC]){count sum{totalNeurons} dimensions{date}}}}}`
+
+    try {
+      const res = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, variables: { a: acct, since, until: today } }),
+      })
+      const body = (await res.json()) as {
+        data?: { viewer?: { accounts?: { aiInferenceAdaptiveGroups?: { count: number; sum: { totalNeurons: number }; dimensions: { date: string } }[] }[] } }
+        errors?: { message: string }[]
+      }
+      if (body.errors?.length) {
+        // Most likely the token lacks Account Analytics: Read.
+        return c.json({ available: true as const, error: body.errors[0]?.message ?? 'analytics query failed' }, 502)
+      }
+      const groups = body.data?.viewer?.accounts?.[0]?.aiInferenceAdaptiveGroups ?? []
+      const byDay = groups.map((g) => ({ date: g.dimensions.date, neurons: g.sum.totalNeurons, requests: g.count }))
+      const todayNeurons = byDay.find((d) => d.date === today)?.neurons ?? 0
+
+      c.header('Cache-Control', 'max-age=300')
+      return c.json({
+        available: true as const,
+        dailyFreeNeurons: FREE_DAILY_NEURONS,
+        neuronsToday: todayNeurons,
+        neuronsRemaining: Math.max(FREE_DAILY_NEURONS - todayNeurons, 0),
+        byDay,
+      })
+    } catch (e) {
+      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' }, 502)
+    }
+  })
+  .get('/gemini', async (c) => {
+    if (!geminiMonitoringAvailable()) return c.json({ available: false as const })
+    try {
+      const models = await fetchGeminiUsage()
+      c.header('Cache-Control', 'max-age=60')
+      return c.json({ available: true as const, generatedAt: new Date().toISOString(), models })
+    } catch (e) {
+      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'monitoring query failed' }, 502)
     }
   })
