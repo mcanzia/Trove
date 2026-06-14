@@ -1,0 +1,60 @@
+# Render blueprint for the Trove API (the always-on Node backbone that serves
+# both the web SPA and, later, the mobile app).
+#
+# The web SPA is hosted separately on Vercel (see vercel.json + DEPLOY.md), so
+# this blueprint defines only the API service.
+#
+# Deploy: Render Dashboard → New → Blueprint → connect this repo. Then set every
+# `sync: false` secret in the dashboard (they are intentionally NOT in git).
+#
+# MOBILE / always-on: change `plan: free` → `plan: starter` ($7/mo) to remove
+# cold starts before shipping mobile. No client change needed if you've put the
+# API behind a custom domain (api.<your-domain>) — see DEPLOY.md.
+
+services:
+  - type: web
+    name: trove-api
+    runtime: node
+    plan: free                      # ⬅ flip to `starter` for always-on (mobile)
+    rootDir: .
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @trove/api... build
+    startCommand: node apps/api/dist/index.js
+    healthCheckPath: /health         # unauthenticated GET /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "20"                  # package.json engines: node >=20
+      # PORT is injected by Render automatically; the app reads env.PORT.
+
+      # ---- Supabase (the shared contract) ----
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      # ---- CORS: set to the web origin(s), comma-separated ----
+      # e.g. https://trove.vercel.app,https://app.<your-domain>
+      - key: CORS_ORIGINS
+        sync: false
+
+      # ---- OpenRouter (paid vision + live balance panel) ----
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_DAILY_BUDGET_USD
+        value: "2"
+
+      # ---- Cloudflare Workers AI neuron panel (token needs Account Analytics: Read) ----
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+
+      # ---- Gemini authoritative usage (Cloud Monitoring) ----
+      - key: GEMINI_MONITORING_PROJECT_ID
+        value: gen-lang-client-0463494413
+      - key: GEMINI_MONITORING_QUOTA_PROJECT
+        value: trove-monitoring-260613
+      - key: GEMINI_MONITORING_SA_JSON   # inline contents of gcp-monitoring-sa.json
+        sync: false
