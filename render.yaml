@@ -23,7 +23,8 @@ services:
     autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: "20"                  # package.json engines: node >=20
+        value: "22"                  # 22+ required: @supabase/supabase-js realtime
+                                     # needs a global WebSocket (Node <22 lacks it)
       # PORT is injected by Render automatically; the app reads env.PORT.
 
       # ---- Supabase (the shared contract) ----
