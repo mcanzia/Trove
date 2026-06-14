@@ -305,6 +305,24 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* Mix legend */}
+      {data && data.providers.some((p) => p.calls > 0) && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+          <span>Mix:</span>
+          {([
+            ['bg-emerald-500', 'ok — succeeded'],
+            ['bg-amber-500', 'quota — rate/quota limit'],
+            ['bg-orange-500', 'budget — paid cap reached'],
+            ['bg-red-500', 'error — failed'],
+          ] as const).map(([cls, label]) => (
+            <span key={label} className="inline-flex items-center gap-1.5">
+              <span className={`h-2 w-2 rounded-full ${cls}`} aria-hidden />
+              {label}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* Per-task footer */}
       {data && (
         <div className="mt-4 flex flex-wrap gap-4 text-xs text-muted-foreground">
