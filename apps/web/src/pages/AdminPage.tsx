@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Activity, AlertTriangle, CheckCircle2, CircleDollarSign, Clock, Cpu, Zap } from 'lucide-react'
-import { useAiUsage, useOpenRouterLive, useCloudflareLive, type ProviderStatus, type ProviderUsage } from '@/hooks/useAiUsage'
+import { useAiUsage, useOpenRouterLive, useCloudflareLive, useGeminiLive, type ProviderStatus, type ProviderUsage, type GeminiModelUsage } from '@/hooks/useAiUsage'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
 import {
@@ -105,6 +105,55 @@ function MixBar({ p }: { p: ProviderUsage }) {
 }
 
 // ---------------------------------------------------------------------------
+// Gemini per-model usage (authoritative, from Cloud Monitoring)
+// ---------------------------------------------------------------------------
+function UsageBar({ used, limit }: { used: number; limit: number | null }) {
+  const pct = limit && limit > 0 ? Math.min((used / limit) * 100, 100) : 0
+  const over = limit != null && used >= limit
+  const warn = limit != null && pct >= 75
+  const color = over ? 'bg-red-500' : warn ? 'bg-amber-500' : 'bg-emerald-500'
+  return (
+    <div className="flex items-center justify-end gap-2">
+      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
+        <div className={color} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="tabular-nums text-xs">{used.toLocaleString()}<span className="text-muted-foreground">/{limit != null ? limit.toLocaleString() : '∞'}</span></span>
+    </div>
+  )
+}
+
+function GeminiPanel({ models }: { models: GeminiModelUsage[] }) {
+  return (
+    <div className="mt-6">
+      <h2 className="mb-1 font-display text-lg font-semibold text-foreground">Gemini — per-model (live)</h2>
+      <p className="mb-3 text-xs text-muted-foreground">Authoritative quota usage from Google Cloud Monitoring · RPD resets midnight Pacific</p>
+      <div className="rounded-xl border bg-card">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Model</TableHead>
+              <TableHead className="text-right">RPD (today)</TableHead>
+              <TableHead className="text-right">RPM (peak)</TableHead>
+              <TableHead className="text-right">TPM (peak)</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {models.map((m) => (
+              <TableRow key={m.model}>
+                <TableCell className="font-medium">{m.model}</TableCell>
+                <TableCell><UsageBar used={m.rpd.used} limit={m.rpd.limit} /></TableCell>
+                <TableCell><UsageBar used={m.rpm.peak} limit={m.rpm.limit} /></TableCell>
+                <TableCell><UsageBar used={m.tpm.peak} limit={m.tpm.limit} /></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // AdminPage
 // ---------------------------------------------------------------------------
 export default function AdminPage() {
@@ -112,6 +161,7 @@ export default function AdminPage() {
   const { data, isLoading, error } = useAiUsage(days)
   const { data: live } = useOpenRouterLive()
   const { data: cf } = useCloudflareLive()
+  const { data: gemini } = useGeminiLive()
 
   const overBudget = live?.available && live.budgetRemainingUsd != null && live.budgetRemainingUsd <= 0
 
@@ -264,6 +314,14 @@ export default function AdminPage() {
             )
           })}
         </div>
+      )}
+
+      {/* Authoritative per-model Gemini usage (Cloud Monitoring) */}
+      {gemini?.available && gemini.models && gemini.models.length > 0 && (
+        <GeminiPanel models={gemini.models} />
+      )}
+      {gemini?.available && gemini.error && (
+        <p className="mt-4 text-xs text-amber-600 dark:text-amber-400">Gemini live usage unavailable: {gemini.error}</p>
       )}
     </div>
   )

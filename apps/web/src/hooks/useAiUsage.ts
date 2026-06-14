@@ -115,3 +115,29 @@ export function useCloudflareLive() {
     refetchInterval: 5 * 60_000,
   })
 }
+
+export interface GeminiModelUsage {
+  model: string
+  rpd: { used: number; limit: number | null }
+  rpm: { peak: number; limit: number | null }
+  tpm: { peak: number; limit: number | null }
+}
+export interface GeminiLive {
+  available: boolean
+  error?: string
+  generatedAt?: string
+  models?: GeminiModelUsage[]
+}
+
+/** Authoritative per-model Gemini usage from Cloud Monitoring (quota day). */
+export function useGeminiLive() {
+  return useQuery<GeminiLive>({
+    queryKey: ['ai-usage', 'gemini'],
+    queryFn: async () => {
+      const res = await api.api['ai-usage'].gemini.$get()
+      return (await res.json()) as GeminiLive
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  })
+}

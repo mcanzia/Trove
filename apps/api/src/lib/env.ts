@@ -18,6 +18,17 @@ const schema = z.object({
   // (the inference token alone is not authorized for the GraphQL analytics API).
   CLOUDFLARE_ACCOUNT_ID: z.string().min(1).optional(),
   CLOUDFLARE_API_TOKEN: z.string().min(1).optional(),
+  // Optional: enables the authoritative per-model Gemini usage panel
+  // (/api/ai-usage/gemini) via the Cloud Monitoring API. PROJECT_ID is the AI
+  // Studio project; provide the read-only service-account key as inline JSON
+  // (prod) or a file path (local dev). Needs roles/monitoring.viewer.
+  GEMINI_MONITORING_PROJECT_ID: z.string().min(1).optional(),
+  GEMINI_MONITORING_SA_JSON: z.string().min(1).optional(),
+  GEMINI_MONITORING_SA_KEYFILE: z.string().min(1).optional(),
+  // A billing-enabled project to attribute the (free) Monitoring reads to, since
+  // the AI Studio free-tier project has billing off. The SA needs
+  // roles/serviceusage.serviceUsageConsumer on it.
+  GEMINI_MONITORING_QUOTA_PROJECT: z.string().min(1).optional(),
   PORT: z.coerce.number().int().positive().default(8787),
   CORS_ORIGINS: z
     .string()

@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import type { AppEnv } from '../lib/context.js'
 import { env } from '../lib/env.js'
+import { fetchGeminiUsage, geminiMonitoringAvailable } from '../lib/geminiMonitoring.js'
 
 /**
  * Admin dashboard data for AI model usage/exhaustion.
@@ -212,5 +213,15 @@ export const aiUsage = new Hono<AppEnv>()
       })
     } catch (e) {
       return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' }, 502)
+    }
+  })
+  .get('/gemini', async (c) => {
+    if (!geminiMonitoringAvailable()) return c.json({ available: false as const })
+    try {
+      const models = await fetchGeminiUsage()
+      c.header('Cache-Control', 'max-age=60')
+      return c.json({ available: true as const, generatedAt: new Date().toISOString(), models })
+    } catch (e) {
+      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'monitoring query failed' }, 502)
     }
   })
