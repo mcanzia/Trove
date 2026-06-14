@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 
-export type ProviderStatus = 'healthy' | 'throttled' | 'exhausted'
+export type ProviderStatus = 'healthy' | 'throttled' | 'exhausted' | 'idle'
 
 export interface RateLimitLeg {
   limit: number | null
@@ -22,7 +22,7 @@ export interface ProviderUsage {
   error: number
   successRate: number
   costUsd: number
-  lastSeen: string
+  lastSeen: string | null
   latestStatus: string
   models: string[]
   tasks: string[]

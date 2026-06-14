@@ -29,6 +29,7 @@ const STATUS_STYLES: Record<ProviderStatus, { dot: string; label: string; text: 
   healthy: { dot: 'bg-emerald-500', label: 'Healthy', text: 'text-emerald-600 dark:text-emerald-400' },
   throttled: { dot: 'bg-amber-500', label: 'Throttled', text: 'text-amber-600 dark:text-amber-400' },
   exhausted: { dot: 'bg-red-500', label: 'Exhausted', text: 'text-red-600 dark:text-red-400' },
+  idle: { dot: 'bg-muted-foreground/40', label: 'Idle', text: 'text-muted-foreground' },
 }
 
 function StatusChip({ status }: { status: ProviderStatus }) {
@@ -242,7 +243,7 @@ export default function AdminPage() {
         <div className="space-y-2">
           {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
         </div>
-      ) : !data || data.providers.length === 0 ? (
+      ) : !data ? (
         <EmptyState
           icon={Activity}
           title="No AI usage recorded yet"
@@ -265,8 +266,10 @@ export default function AdminPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {data.providers.map((p) => (
-                <TableRow key={p.provider}>
+              {data.providers.map((p) => {
+                const unused = p.calls === 0
+                return (
+                <TableRow key={p.provider} className={unused ? 'opacity-55' : undefined}>
                   <TableCell className="font-medium">
                     {p.provider}
                     {p.models.length > 0 && (
@@ -276,14 +279,16 @@ export default function AdminPage() {
                     )}
                   </TableCell>
                   <TableCell><StatusChip status={p.status} /></TableCell>
-                  <TableCell className="text-right tabular-nums">{p.calls.toLocaleString()}</TableCell>
+                  <TableCell className="text-right tabular-nums">{unused ? '—' : p.calls.toLocaleString()}</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    <span className="inline-flex items-center gap-1">
-                      {p.successRate >= 0.95 && <CheckCircle2 size={13} className="text-emerald-500" aria-hidden />}
-                      {(p.successRate * 100).toFixed(0)}%
-                    </span>
+                    {unused ? <span className="text-muted-foreground">—</span> : (
+                      <span className="inline-flex items-center gap-1">
+                        {p.successRate >= 0.95 && <CheckCircle2 size={13} className="text-emerald-500" aria-hidden />}
+                        {(p.successRate * 100).toFixed(0)}%
+                      </span>
+                    )}
                   </TableCell>
-                  <TableCell><MixBar p={p} /></TableCell>
+                  <TableCell>{unused ? <span className="text-muted-foreground">—</span> : <MixBar p={p} />}</TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground" title={headroom(p).title}>
                     {headroom(p).label}
                   </TableCell>
@@ -293,7 +298,8 @@ export default function AdminPage() {
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{p.tasks.join(', ')}</TableCell>
                 </TableRow>
-              ))}
+                )
+              })}
             </TableBody>
           </Table>
         </div>

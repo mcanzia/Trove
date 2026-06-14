@@ -51,6 +51,21 @@ function deriveStatus(c: Counts, latestStatus: string): 'healthy' | 'throttled' 
   return 'healthy'
 }
 
+// Canonical roster of every provider the pipeline can call (mirrors the ladders
+// in SavedPosts llm_utils.py + the vision paths). Providers with no telemetry in
+// the window are still listed as `idle` rows so the dashboard shows the full
+// fleet, not just whatever ran recently.
+const KNOWN_PROVIDERS: { provider: string; models: string[]; tasks: string[] }[] = [
+  { provider: 'groq', models: ['llama-3.3-70b-versatile', 'whisper-large-v3-turbo', 'meta-llama/llama-4-scout-17b-16e-instruct'], tasks: ['text', 'video'] },
+  { provider: 'cerebras', models: ['zai-glm-4.7'], tasks: ['text'] },
+  { provider: 'sambanova', models: ['Meta-Llama-3.3-70B-Instruct'], tasks: ['text'] },
+  { provider: 'cloudflare', models: ['@cf/meta/llama-3.3-70b-instruct-fp8-fast'], tasks: ['text'] },
+  { provider: 'github', models: ['openai/gpt-4o-mini'], tasks: ['text'] },
+  { provider: 'gemini', models: ['gemini-2.5-flash', 'gemini-3.1-flash-lite'], tasks: ['text', 'video', 'image'] },
+  { provider: 'openrouter', models: ['nvidia/nemotron-nano-12b-v2-vl:free', 'qwen/qwen2.5-vl-72b-instruct'], tasks: ['video', 'image'] },
+  { provider: 'claude-cli', models: ['claude-haiku-4-5'], tasks: ['text'] },
+]
+
 export const aiUsage = new Hono<AppEnv>()
   .get('/', zValidator('query', z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })), async (c) => {
     const { days } = c.req.valid('query')
@@ -103,7 +118,14 @@ export const aiUsage = new Hono<AppEnv>()
       tally(d, r.status, cost)
     }
 
-    const providerList = [...providers.entries()]
+    type ProviderRow = {
+      provider: string; calls: number; ok: number; quota: number; budget: number; error: number
+      successRate: number; costUsd: number; lastSeen: string | null; latestStatus: string
+      models: string[]; tasks: string[]; rateLimit: RateLimit | null
+      status: 'healthy' | 'throttled' | 'exhausted' | 'idle'
+    }
+
+    const used: ProviderRow[] = [...providers.entries()]
       .map(([provider, p]) => ({
         provider,
         calls: p.calls,
@@ -113,7 +135,7 @@ export const aiUsage = new Hono<AppEnv>()
         error: p.error,
         successRate: p.calls ? p.ok / p.calls : 0,
         costUsd: Number(p.costUsd.toFixed(6)),
-        lastSeen: p.lastSeen,
+        lastSeen: p.lastSeen as string | null,
         latestStatus: p.latestStatus,
         models: [...p.models],
         tasks: [...p.tasks],
@@ -121,6 +143,19 @@ export const aiUsage = new Hono<AppEnv>()
         status: deriveStatus(p, p.latestStatus),
       }))
       .sort((a, b) => b.calls - a.calls)
+
+    // Append every known provider that produced no telemetry in the window as an
+    // `idle` empty-state row, so the full fleet is always visible.
+    const seen = new Set(used.map((p) => p.provider))
+    const idle: ProviderRow[] = KNOWN_PROVIDERS.filter((k) => !seen.has(k.provider)).map((k) => ({
+      provider: k.provider,
+      calls: 0, ok: 0, quota: 0, budget: 0, error: 0,
+      successRate: 0, costUsd: 0,
+      lastSeen: null, latestStatus: 'idle',
+      models: k.models, tasks: k.tasks, rateLimit: null,
+      status: 'idle' as const,
+    }))
+    const providerList = [...used, ...idle]
 
     const byDayList = [...byDay.entries()]
       .map(([date, d]) => ({ date, calls: d.calls, ok: d.ok, quota: d.quota, budget: d.budget, error: d.error, costUsd: Number(d.costUsd.toFixed(6)) }))
