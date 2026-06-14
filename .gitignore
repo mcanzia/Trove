@@ -28,3 +28,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# GCP service-account key for Cloud Monitoring (Gemini usage) — SECRET
+apps/api/gcp-monitoring-sa.json
+gcp-monitoring-sa.json

@@ -1,7 +1,17 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 
-export type ProviderStatus = 'healthy' | 'throttled' | 'exhausted'
+export type ProviderStatus = 'healthy' | 'throttled' | 'exhausted' | 'idle'
+
+export interface RateLimitLeg {
+  limit: number | null
+  remaining: number | null
+  reset: string | null
+}
+export interface RateLimit {
+  requests?: RateLimitLeg
+  tokens?: RateLimitLeg
+}
 
 export interface ProviderUsage {
   provider: string
@@ -12,10 +22,11 @@ export interface ProviderUsage {
   error: number
   successRate: number
   costUsd: number
-  lastSeen: string
+  lastSeen: string | null
   latestStatus: string
   models: string[]
   tasks: string[]
+  rateLimit: RateLimit | null
   status: ProviderStatus
 }
 
@@ -77,6 +88,54 @@ export function useOpenRouterLive() {
     queryFn: async () => {
       const res = await api.api['ai-usage'].openrouter.$get()
       return (await res.json()) as OpenRouterLive
+    },
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  })
+}
+
+export interface CloudflareLive {
+  available: boolean
+  error?: string
+  dailyFreeNeurons?: number
+  neuronsToday?: number
+  neuronsRemaining?: number
+  byDay?: { date: string; neurons: number; requests: number }[]
+}
+
+/** Live Cloudflare Workers AI neuron usage vs the 10k/day free allotment. */
+export function useCloudflareLive() {
+  return useQuery<CloudflareLive>({
+    queryKey: ['ai-usage', 'cloudflare'],
+    queryFn: async () => {
+      const res = await api.api['ai-usage'].cloudflare.$get()
+      return (await res.json()) as CloudflareLive
+    },
+    staleTime: 5 * 60_000,
+    refetchInterval: 5 * 60_000,
+  })
+}
+
+export interface GeminiModelUsage {
+  model: string
+  rpd: { used: number; limit: number | null }
+  rpm: { peak: number; limit: number | null }
+  tpm: { peak: number; limit: number | null }
+}
+export interface GeminiLive {
+  available: boolean
+  error?: string
+  generatedAt?: string
+  models?: GeminiModelUsage[]
+}
+
+/** Authoritative per-model Gemini usage from Cloud Monitoring (quota day). */
+export function useGeminiLive() {
+  return useQuery<GeminiLive>({
+    queryKey: ['ai-usage', 'gemini'],
+    queryFn: async () => {
+      const res = await api.api['ai-usage'].gemini.$get()
+      return (await res.json()) as GeminiLive
     },
     staleTime: 60_000,
     refetchInterval: 60_000,
