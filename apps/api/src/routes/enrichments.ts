@@ -10,6 +10,7 @@ import type {
   MALLinkData,
   HardcoverLinkData,
   TravelLocation,
+  SpotifyLink,
 } from '@trove/shared'
 
 /**
@@ -116,6 +117,29 @@ export const enrichments = new Hono<AppEnv>()
         tmdbRating: (r.tmdb_rating as number | null) ?? null,
         genres: (r.genres as string[] | null) ?? [],
         releaseYear: (r.release_year as number | null) ?? null,
+      }))
+      return c.json(result)
+    } catch (e) {
+      return c.json(fail((e as Error).message), 500)
+    }
+  })
+  .get('/spotify', async (c) => {
+    try {
+      const rows = await selectAll(
+        c.get('supabase'),
+        'spotify_links',
+        'analysis_item_id, track_id, track_url, track_name, artist_name, album_name, album_art_url, preview_url, popularity',
+      )
+      const result: (SpotifyLink & { analysisItemId: number })[] = rows.map((r) => ({
+        analysisItemId: r.analysis_item_id as number,
+        trackId: (r.track_id as string | null) ?? null,
+        trackUrl: (r.track_url as string | null) ?? null,
+        trackName: (r.track_name as string | null) ?? null,
+        artistName: (r.artist_name as string | null) ?? null,
+        albumName: (r.album_name as string | null) ?? null,
+        albumArtUrl: (r.album_art_url as string | null) ?? null,
+        previewUrl: (r.preview_url as string | null) ?? null,
+        popularity: (r.popularity as number | null) ?? null,
       }))
       return c.json(result)
     } catch (e) {

@@ -64,6 +64,7 @@ import {
   type MALSearchResult,
 } from '@/hooks/useMAL'
 import { useBGGLinks } from '@/hooks/useBGGLinks'
+import { useSpotifyLinks } from '@/hooks/useSpotify'
 import { useRecipeCards } from '@/hooks/useRecipeCards'
 import { useInstagramStorefronts } from '@/hooks/useInstagramStorefronts'
 import { SavedPostsSection } from '@/components/SavedPostsSection'
@@ -444,6 +445,7 @@ export default function CategoryPage() {
     }
   }, [productConfig, storefronts])
   const { data: bggLinks }          = useBGGLinks()
+  const { data: spotifyLinks }      = useSpotifyLinks()
   const { data: recipeCards }       = useRecipeCards()
   const { data: hardcoverLibrary }  = useHardcoverBooks()
   const { data: hardcoverLinks }    = useHardcoverLinks()
@@ -834,12 +836,31 @@ export default function CategoryPage() {
     if (isMusic) {
       base.push({
         id: '_spotify',
-        header: 'Listen',
-        accessorFn: (row) => String(row.item_data.title ?? ''),
+        header: 'Spotify',
+        accessorFn: (row) => spotifyLinks?.get(row.id)?.popularity ?? -1,
         cell: ({ row }) => {
           const title = String(row.original.item_data.title ?? '').trim()
           const artist = String(row.original.item_data.artist ?? '').trim()
           if (!title) return <span className="text-muted-foreground text-xs">—</span>
+          const link = spotifyLinks?.get(row.original.id)
+          // Resolved track from the Spotify API → direct link + album art.
+          if (link?.trackUrl) {
+            return (
+              <a
+                href={link.trackUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 text-xs text-green-600 hover:underline dark:text-green-400"
+                title={`${link.trackName ?? title}${link.artistName ? ` — ${link.artistName}` : ''}`}
+              >
+                {link.albumArtUrl && (
+                  <img src={link.albumArtUrl} alt="" className="h-8 w-8 shrink-0 rounded" loading="lazy" />
+                )}
+                <span className="whitespace-nowrap">Play →</span>
+              </a>
+            )
+          }
+          // Not resolved yet → fall back to a Spotify search.
           const q = encodeURIComponent([title, artist].filter(Boolean).join(' '))
           return (
             <a
@@ -849,7 +870,7 @@ export default function CategoryPage() {
               className="text-xs text-primary hover:underline whitespace-nowrap"
               title="Search this on Spotify"
             >
-              Spotify →
+              Search →
             </a>
           )
         },
@@ -1353,7 +1374,7 @@ export default function CategoryPage() {
 
     return base
   }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations,
-      isBoardGames, bggLinks, isMtg, isAnime, isFood, isMusic, recipeCards, slug,
+      isBoardGames, bggLinks, isMtg, isAnime, isFood, isMusic, spotifyLinks, recipeCards, slug,
       isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
       updateMALStatus, updateMALScore, searchMAL, deleteMALLink,
       igdbLinks, deleteIGDBLink, updateIGDBScore, openIGDBModal,
