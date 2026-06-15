@@ -44,10 +44,10 @@ async function verifyRedditCookie(cookie: string, username: string): Promise<boo
  * network/ambiguous error (IG is hostile to datacenter IPs, so we don't block
  * a save on that — the worker re-validates and flags the connection if needed).
  */
-async function verifyInstagramSession(sessionid: string): Promise<'ok' | 'invalid' | 'unknown'> {
+async function verifyInstagramSession(cookie: string): Promise<'ok' | 'invalid' | 'unknown'> {
   try {
     const res = await fetch('https://www.instagram.com/api/v1/accounts/current_user/?edit=true', {
-      headers: { 'User-Agent': BROWSER_UA, 'X-IG-App-ID': IG_APP_ID, Cookie: `sessionid=${sessionid}` },
+      headers: { 'User-Agent': BROWSER_UA, 'X-IG-App-ID': IG_APP_ID, Cookie: cookie },
     })
     if (res.status === 401 || res.status === 403) return 'invalid'
     if (!res.ok) return 'unknown'
@@ -110,17 +110,20 @@ export const connections = new Hono<AppEnv>()
   })
   .post('/instagram/credential', async (c) => {
     if (!env.REDDIT_TOKEN_ENC_KEY) return c.json({ error: 'Connect is not configured on the server' }, 503)
-    const body = (await c.req.json().catch(() => ({}))) as { sessionid?: string; username?: string }
-    const sessionid = (body.sessionid ?? '').trim()
+    const body = (await c.req.json().catch(() => ({}))) as { cookie?: string; username?: string }
+    const cookie = (body.cookie ?? '').trim()
     const username = (body.username ?? '').trim().replace(/^@/, '')
-    if (!sessionid || !username) return c.json({ error: 'Both your Instagram sessionid and username are required.' }, 400)
-    if ((await verifyInstagramSession(sessionid)) === 'invalid') {
+    if (!cookie || !username) return c.json({ error: 'Both your Instagram cookie and username are required.' }, 400)
+    if (!/(^|;\s*)sessionid=/.test(cookie)) {
+      return c.json({ error: 'That cookie is missing sessionid. Copy the full instagram.com cookie header (it must include sessionid and csrftoken).' }, 400)
+    }
+    if ((await verifyInstagramSession(cookie)) === 'invalid') {
       return c.json(
-        { error: "That Instagram session looks logged out. Copy a fresh sessionid cookie while logged in to instagram.com." },
+        { error: "That Instagram session looks logged out. Copy a fresh cookie while logged in to instagram.com." },
         400,
       )
     }
-    return storeCredential(c, 'instagram', sessionid, username)
+    return storeCredential(c, 'instagram', cookie, username)
   })
   .delete('/reddit', (c) => disconnect(c, 'reddit'))
   .delete('/instagram', (c) => disconnect(c, 'instagram'))
