@@ -12,13 +12,10 @@ const schema = z.object({
   // Comma-separated admin emails allowed to hit /api/ai-usage/* (the dashboard).
   // Fail-closed: if unset, no one is admin.
   ADMIN_EMAILS: z.string().optional(),
-  // Reddit ingestion (multi-user). All optional so the API boots without them;
-  // the /api/connections + OAuth routes only work once they're set.
-  REDDIT_CLIENT_ID: z.string().min(1).optional(),
-  REDDIT_CLIENT_SECRET: z.string().min(1).optional(),
-  REDDIT_REDIRECT_URI: z.string().url().optional(),       // https://<api>/auth/reddit/callback
-  REDDIT_TOKEN_ENC_KEY: z.string().min(1).optional(),     // base64 of 32 bytes (shared with worker)
-  WEB_ORIGIN: z.string().url().optional(),                // where the callback redirects back to
+  // Reddit ingestion (multi-user). Optional so the API boots without it;
+  // /api/connections/reddit/credential only works once it's set. base64 of 32
+  // bytes — encrypts the user's pasted cookie; MUST match the worker's value.
+  REDDIT_TOKEN_ENC_KEY: z.string().min(1).optional(),
   // Optional: enables the admin dashboard's live OpenRouter balance/budget panel
   // (/api/ai-usage/openrouter). Held server-side only — never sent to the client.
   OPENROUTER_API_KEY: z.string().min(1).optional(),

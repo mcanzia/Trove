@@ -11,7 +11,7 @@ import { enrichments } from './routes/enrichments.js'
 import { posts } from './routes/posts.js'
 import { stats } from './routes/stats.js'
 import { aiUsage } from './routes/aiUsage.js'
-import { connections, redditCallback } from './routes/connections.js'
+import { connections } from './routes/connections.js'
 import { syncJobs } from './routes/syncJobs.js'
 
 export const app = new Hono<AppEnv>()
@@ -32,11 +32,6 @@ app.use('/api/*', requireAuth)
 
 // Health check (handy for uptime probes / deploy smoke tests) — left unauthenticated.
 app.get('/health', (c) => c.json({ ok: true, service: 'trove-backend' }))
-
-// Reddit OAuth callback — top-level (NOT under /api/*) so requireAuth doesn't gate
-// it; a browser redirect from Reddit carries no bearer token, so identity comes
-// from the signed `state` instead.
-app.get('/auth/reddit/callback', redditCallback)
 
 // Mounting routes on a const chain keeps the inferred type intact for Hono RPC.
 const routes = app

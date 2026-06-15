@@ -31,18 +31,11 @@ services:
       - key: ADMIN_EMAILS
         value: canziani.developer@gmail.com
 
-      # ---- Reddit ingestion (OAuth + per-user sync) ----
-      # REDDIT_TOKEN_ENC_KEY must be the IDENTICAL value set on the worker.
-      - key: REDDIT_CLIENT_ID
-        sync: false
-      - key: REDDIT_CLIENT_SECRET
-        sync: false
-      - key: REDDIT_REDIRECT_URI
-        sync: false        # https://<api-domain>/auth/reddit/callback
+      # ---- Reddit ingestion (per-user cookie sync) ----
+      # Encrypts the user's pasted Reddit cookie. Must be the IDENTICAL value set
+      # on the worker (the API encrypts, the worker decrypts).
       - key: REDDIT_TOKEN_ENC_KEY
         sync: false
-      - key: WEB_ORIGIN
-        sync: false        # e.g. https://trovefeed.vercel.app
 
       # ---- Supabase (the shared contract) ----
       - key: SUPABASE_URL

@@ -1,21 +1,40 @@
-import { Hono, type Context } from 'hono'
+import { Hono } from 'hono'
 import type { AppEnv } from '../lib/context.js'
 import { env } from '../lib/env.js'
 import { supabaseAdmin } from '../lib/supabaseAdmin.js'
-import { encryptToken, signState, verifyState } from '../lib/crypto.js'
+import { encryptToken } from '../lib/crypto.js'
 
-const REDDIT_SCOPES = 'identity history'
-const UA = 'web:trove:v1'
+const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
+  'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 
 /**
  * Authed connection routes (mounted at /api/connections, under requireAuth):
- *   GET  /                 — caller's connection state (no secrets)
- *   POST /reddit/start     — returns the Reddit authorize URL (signed-state CSRF)
+ *   GET    /                  — caller's connection state (no secrets)
+ *   POST   /reddit/credential — store the user's pasted Reddit cookie (verified)
+ *   DELETE /reddit            — disconnect (wipe credential + connection)
  *
- * The OAuth callback is exported separately (redditCallback) and mounted at a
- * top-level, UNAUTHENTICATED path in app.ts — a browser redirect from Reddit
- * carries no bearer token, so identity comes from the signed state instead.
+ * No platform OAuth app: the user pastes their own browser cookie (the same
+ * mechanism the single-tenant pipeline uses), so this sidesteps Reddit's app
+ * approval gate. The cookie is AES-GCM encrypted at rest and only the worker's
+ * service role can read it; it never goes back to the client.
  */
+
+/** Verify a Reddit cookie by fetching one saved item; returns true if it works. */
+async function verifyRedditCookie(cookie: string, username: string): Promise<boolean> {
+  const url = `https://www.reddit.com/user/${encodeURIComponent(username)}/saved.json?limit=1&raw_json=1`
+  try {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': BROWSER_UA, Accept: 'application/json', Cookie: cookie },
+    })
+    if (!res.ok) return false
+    const body = (await res.json()) as { data?: { children?: unknown[] } }
+    return !!body?.data
+  } catch {
+    return false
+  }
+}
+
 export const connections = new Hono<AppEnv>()
   .get('/', async (c) => {
     const { data, error } = await c.get('supabase')
@@ -24,74 +43,43 @@ export const connections = new Hono<AppEnv>()
     if (error) return c.json({ error: error.message }, 500)
     return c.json({ connections: data ?? [] })
   })
-  .post('/reddit/start', (c) => {
-    if (!env.REDDIT_CLIENT_ID || !env.REDDIT_REDIRECT_URI || !env.REDDIT_TOKEN_ENC_KEY) {
+  .post('/reddit/credential', async (c) => {
+    if (!env.REDDIT_TOKEN_ENC_KEY) {
       return c.json({ error: 'Reddit connect is not configured on the server' }, 503)
     }
-    const state = signState(c.get('userId'))
-    const url = new URL('https://www.reddit.com/api/v1/authorize')
-    url.search = new URLSearchParams({
-      client_id: env.REDDIT_CLIENT_ID,
-      response_type: 'code',
-      state,
-      redirect_uri: env.REDDIT_REDIRECT_URI,
-      duration: 'permanent',
-      scope: REDDIT_SCOPES,
-    }).toString()
-    return c.json({ url: url.toString() })
-  })
+    const body = (await c.req.json().catch(() => ({}))) as { cookie?: string; username?: string }
+    const cookie = (body.cookie ?? '').trim()
+    const username = (body.username ?? '').trim().replace(/^\/?u\//i, '')
+    if (!cookie || !username) {
+      return c.json({ error: 'Both your Reddit cookie and username are required.' }, 400)
+    }
 
-/** Unauthenticated browser-redirect callback (mounted top-level in app.ts). */
-export async function redditCallback(c: Context<AppEnv>): Promise<Response> {
-  const back = (q: string) => c.redirect(`${env.WEB_ORIGIN ?? ''}/connections?${q}`)
-  const code = c.req.query('code')
-  const state = c.req.query('state')
-  if (c.req.query('error')) return back(`reddit=error&reason=${encodeURIComponent(c.req.query('error')!)}`)
-  if (!code || !state) return back('reddit=error&reason=missing_code')
+    if (!(await verifyRedditCookie(cookie, username))) {
+      return c.json(
+        { error: "Couldn't read your saved posts with that cookie. Double-check the username and that the cookie is fresh (copied while logged in)." },
+        400,
+      )
+    }
 
-  let userId: string
-  try {
-    userId = verifyState(state)
-  } catch {
-    return back('reddit=error&reason=bad_state')
-  }
-
-  try {
-    const basic = Buffer.from(`${env.REDDIT_CLIENT_ID}:${env.REDDIT_CLIENT_SECRET}`).toString('base64')
-    const tokenRes = await fetch('https://www.reddit.com/api/v1/access_token', {
-      method: 'POST',
-      headers: {
-        Authorization: `Basic ${basic}`,
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': UA,
-      },
-      body: new URLSearchParams({
-        grant_type: 'authorization_code',
-        code,
-        redirect_uri: env.REDDIT_REDIRECT_URI!,
-      }),
-    })
-    if (!tokenRes.ok) return back('reddit=error&reason=token_exchange')
-    const tok = (await tokenRes.json()) as { refresh_token?: string; access_token?: string }
-    if (!tok.refresh_token || !tok.access_token) return back('reddit=error&reason=no_refresh_token')
-
-    const meRes = await fetch('https://oauth.reddit.com/api/v1/me', {
-      headers: { Authorization: `Bearer ${tok.access_token}`, 'User-Agent': UA },
-    })
-    const username = meRes.ok ? ((await meRes.json()) as { name?: string }).name ?? null : null
-
+    const userId = c.get('userId')
     const now = new Date().toISOString()
     const admin = supabaseAdmin()
-    await admin.from('connections').upsert(
-      { user_id: userId, platform: 'reddit', status: 'connected', reddit_username: username, scopes: REDDIT_SCOPES, connected_at: now, updated_at: now },
+    const conn = await admin.from('connections').upsert(
+      { user_id: userId, platform: 'reddit', status: 'connected', reddit_username: username, scopes: 'cookie', connected_at: now, updated_at: now },
       { onConflict: 'user_id,platform' },
     )
-    await admin.from('connection_secrets').upsert(
-      { user_id: userId, platform: 'reddit', refresh_token_enc: encryptToken(tok.refresh_token), updated_at: now },
+    if (conn.error) return c.json({ error: conn.error.message }, 500)
+    const sec = await admin.from('connection_secrets').upsert(
+      { user_id: userId, platform: 'reddit', refresh_token_enc: encryptToken(cookie), updated_at: now },
       { onConflict: 'user_id,platform' },
     )
-    return back('reddit=connected')
-  } catch {
-    return back('reddit=error&reason=server')
-  }
-}
+    if (sec.error) return c.json({ error: sec.error.message }, 500)
+    return c.json({ ok: true, username })
+  })
+  .delete('/reddit', async (c) => {
+    const userId = c.get('userId')
+    const admin = supabaseAdmin()
+    await admin.from('connection_secrets').delete().eq('user_id', userId).eq('platform', 'reddit')
+    await admin.from('connections').delete().eq('user_id', userId).eq('platform', 'reddit')
+    return c.json({ ok: true })
+  })

@@ -1,12 +1,12 @@
-import { createCipheriv, createDecipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { env } from './env.js'
 
 /**
- * AES-256-GCM token encryption + HMAC-signed OAuth state.
+ * AES-256-GCM credential encryption.
  *
- * The Reddit refresh token is encrypted here (API) and decrypted by the Python
- * worker — they share REDDIT_TOKEN_ENC_KEY (base64 of 32 random bytes) and this
- * wire format: base64( iv[12] | ciphertext | authTag[16] ).
+ * The user's pasted Reddit cookie is encrypted here (API) and decrypted by the
+ * Python worker — they share REDDIT_TOKEN_ENC_KEY (base64 of 32 random bytes)
+ * and this wire format: base64( iv[12] | ciphertext | authTag[16] ).
  */
 
 function key(): Buffer {
@@ -32,31 +32,4 @@ export function decryptToken(b64: string): string {
   const decipher = createDecipheriv('aes-256-gcm', key(), iv)
   decipher.setAuthTag(tag)
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString('utf8')
-}
-
-// ---- Signed OAuth state (stateless CSRF) ----
-const b64url = (b: Buffer) => b.toString('base64url')
-
-function sign(data: string): string {
-  return b64url(createHmac('sha256', key()).update(data).digest())
-}
-
-/** Sign a state payload bound to the user, with a nonce + expiry. */
-export function signState(userId: string, ttlSeconds = 600): string {
-  const payload = b64url(Buffer.from(JSON.stringify({
-    uid: userId, n: randomBytes(8).toString('hex'), exp: Date.now() + ttlSeconds * 1000,
-  })))
-  return `${payload}.${sign(payload)}`
-}
-
-/** Verify a state token; returns the userId or throws. */
-export function verifyState(state: string): string {
-  const [payload, sig] = state.split('.')
-  if (!payload || !sig) throw new Error('malformed state')
-  const expected = sign(payload)
-  const a = Buffer.from(sig), b = Buffer.from(expected)
-  if (a.length !== b.length || !timingSafeEqual(a, b)) throw new Error('bad state signature')
-  const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as { uid: string; exp: number }
-  if (!data.uid || typeof data.exp !== 'number' || Date.now() > data.exp) throw new Error('expired state')
-  return data.uid
 }

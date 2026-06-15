@@ -1,8 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
-import { useSearchParams, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link2, RefreshCw, AlertTriangle } from 'lucide-react'
-import { useConnections, startRedditConnect } from '@/hooks/useConnections'
+import { RefreshCw, AlertTriangle, Plug, Trash2, ChevronDown } from 'lucide-react'
+import { useConnections, saveRedditCredential, disconnectReddit } from '@/hooks/useConnections'
 import { useSyncJob, enqueueSync, type SyncJob } from '@/hooks/useSyncJob'
 import { SyncProgress } from '@/components/SyncProgress'
 
@@ -15,41 +14,56 @@ function relTime(iso: string | null): string {
   return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`
 }
 
+/** Collapsible "how to grab your cookie" instructions. */
+function CookieHelp() {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mt-3 rounded-lg border bg-muted/30">
+      <button
+        type="button" onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-sm font-medium"
+      >
+        How do I get my Reddit cookie?
+        <ChevronDown size={15} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <ol className="list-decimal space-y-1.5 px-3 pb-3 pl-7 text-sm text-muted-foreground">
+          <li>Open <span className="text-foreground">reddit.com</span> in your browser, logged in.</li>
+          <li>Open DevTools (<span className="text-foreground">F12</span> or right-click → Inspect) → <span className="text-foreground">Network</span> tab.</li>
+          <li>Reload the page, click the first request to <span className="text-foreground">reddit.com</span>.</li>
+          <li>Under <span className="text-foreground">Request Headers</span>, find <span className="text-foreground">cookie:</span> and copy its entire value.</li>
+          <li>Paste it below. It’s encrypted at rest and only used to fetch your saves.</li>
+        </ol>
+      )}
+    </div>
+  )
+}
+
 export default function ConnectionsPage() {
-  const [params] = useSearchParams()
-  const navigate = useNavigate()
   const qc = useQueryClient()
   const { data: connections, isLoading } = useConnections()
   const { data: job } = useSyncJob()
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const handledReturn = useRef(false)
+  const [username, setUsername] = useState('')
+  const [cookie, setCookie] = useState('')
 
   const reddit = connections?.find((c) => c.platform === 'reddit')
+  const connected = reddit?.status === 'connected'
+  const jobActive = job && (job.status === 'pending' || job.status === 'running')
+  const showJob: SyncJob | null = job ?? null
 
-  // Handle the OAuth return (?reddit=connected | ?reddit=error&reason=…).
-  useEffect(() => {
-    if (handledReturn.current) return
-    const status = params.get('reddit')
-    if (!status) return
-    handledReturn.current = true
-
-    if (status === 'connected') {
-      qc.invalidateQueries({ queryKey: ['connections'] })
-      enqueueSync()
-        .then(() => qc.invalidateQueries({ queryKey: ['sync-job', 'latest'] }))
-        .catch((e) => setError(e instanceof Error ? e.message : 'Failed to start sync'))
-    } else if (status === 'error') {
-      setError(`Reddit connection failed (${params.get('reason') ?? 'unknown'}). Please try again.`)
-    }
-    navigate('/connections', { replace: true })  // clear the query string
-  }, [params, navigate, qc])
-
-  const connect = async () => {
+  const save = async () => {
     setError(null); setBusy(true)
-    try { await startRedditConnect() } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to start connect'); setBusy(false)
-    }
+    try {
+      await saveRedditCredential(cookie.trim(), username.trim())
+      setCookie('')
+      await qc.invalidateQueries({ queryKey: ['connections'] })
+      await enqueueSync()
+      qc.invalidateQueries({ queryKey: ['sync-job', 'latest'] })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to connect')
+    } finally { setBusy(false) }
   }
 
   const syncNow = async () => {
@@ -62,8 +76,15 @@ export default function ConnectionsPage() {
     } finally { setBusy(false) }
   }
 
-  const jobActive = job && (job.status === 'pending' || job.status === 'running')
-  const showJob: SyncJob | null = job ?? null
+  const disconnect = async () => {
+    setError(null); setBusy(true)
+    try {
+      await disconnectReddit()
+      qc.invalidateQueries({ queryKey: ['connections'] })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to disconnect')
+    } finally { setBusy(false) }
+  }
 
   return (
     <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6">
@@ -85,32 +106,62 @@ export default function ConnectionsPage() {
             <div className="font-medium">Reddit</div>
             {isLoading ? (
               <div className="text-sm text-muted-foreground">Loading…</div>
-            ) : reddit && reddit.status === 'connected' ? (
+            ) : connected ? (
               <div className="text-sm text-muted-foreground">
-                Connected as <span className="text-foreground">u/{reddit.reddit_username}</span> · last synced {relTime(reddit.last_synced_at)}
+                Connected as <span className="text-foreground">u/{reddit!.reddit_username}</span> · last synced {relTime(reddit!.last_synced_at)}
               </div>
-            ) : reddit && reddit.status === 'revoked' ? (
-              <div className="text-sm text-amber-600 dark:text-amber-400">Access revoked — reconnect to resume syncing.</div>
+            ) : reddit?.status === 'revoked' ? (
+              <div className="text-sm text-amber-600 dark:text-amber-400">Your cookie expired — paste a fresh one to resume syncing.</div>
             ) : (
               <div className="text-sm text-muted-foreground">Not connected.</div>
             )}
           </div>
-          {reddit && reddit.status === 'connected' ? (
-            <button
-              type="button" onClick={syncNow} disabled={busy || !!jobActive}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <RefreshCw size={14} className={jobActive ? 'animate-spin' : undefined} /> {jobActive ? 'Syncing…' : 'Sync now'}
-            </button>
-          ) : (
-            <button
-              type="button" onClick={connect} disabled={busy}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-gold px-3 py-1.5 text-sm font-medium text-gold-foreground hover:opacity-90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <Link2 size={14} /> {reddit?.status === 'revoked' ? 'Reconnect' : 'Connect Reddit'}
-            </button>
+          {connected && (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <button
+                type="button" onClick={syncNow} disabled={busy || !!jobActive}
+                className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-medium hover:bg-muted disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <RefreshCw size={14} className={jobActive ? 'animate-spin' : undefined} /> {jobActive ? 'Syncing…' : 'Sync now'}
+              </button>
+              <button
+                type="button" onClick={disconnect} disabled={busy} aria-label="Disconnect Reddit"
+                className="inline-flex items-center justify-center rounded-lg border p-1.5 text-muted-foreground hover:bg-muted hover:text-red-500 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           )}
         </div>
+
+        {/* Paste-in form (shown when not connected, or when the cookie expired) */}
+        {!isLoading && !connected && (
+          <div className="mt-4 space-y-3 border-t pt-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium" htmlFor="reddit-username">Reddit username</label>
+              <input
+                id="reddit-username" type="text" value={username} placeholder="your_username"
+                onChange={(e) => setUsername(e.target.value)} autoComplete="off" spellCheck={false}
+                className="w-full rounded-lg border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium" htmlFor="reddit-cookie">Reddit cookie</label>
+              <textarea
+                id="reddit-cookie" value={cookie} rows={3} placeholder="Paste your reddit.com cookie header value…"
+                onChange={(e) => setCookie(e.target.value)} spellCheck={false}
+                className="w-full resize-y rounded-lg border bg-background px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+            <CookieHelp />
+            <button
+              type="button" onClick={save} disabled={busy || !cookie.trim() || !username.trim()}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-gold px-3 py-1.5 text-sm font-medium text-gold-foreground hover:opacity-90 disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Plug size={14} /> {busy ? 'Verifying…' : 'Connect & sync'}
+            </button>
+          </div>
+        )}
       </div>
 
       {showJob && (job?.status !== 'succeeded' || jobActive) && (
@@ -122,7 +173,7 @@ export default function ConnectionsPage() {
       {/* Instagram (deferred) */}
       <div className="mt-4 rounded-xl border bg-card p-4 opacity-60">
         <div className="font-medium">Instagram</div>
-        <div className="text-sm text-muted-foreground">Coming soon — via Instagram data export upload.</div>
+        <div className="text-sm text-muted-foreground">Coming soon — paste your Instagram session, same as Reddit.</div>
       </div>
     </div>
   )
