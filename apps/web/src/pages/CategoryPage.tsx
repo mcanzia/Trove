@@ -383,6 +383,7 @@ export default function CategoryPage() {
   const isVideoGames  = categoryName === 'Video Game Recommendations'
   const isFood        = categoryName === 'Food & Cooking'
   const isMovies      = categoryName === 'Movies & Film Recommendations'
+  const isMusic       = categoryName === 'Music Recommendations'
   const isTVSeries    = categoryName === 'TV Series Recommendations'
   const isTMDB        = isMovies || isTVSeries
   const tmdbMediaType = isTVSeries ? 'tv' : 'movie'
@@ -824,6 +825,32 @@ export default function CategoryPage() {
             >
               Recipe →
             </Link>
+          )
+        },
+        enableSorting: false,
+      } satisfies ColumnDef<AnalysisItem, unknown>)
+    }
+
+    if (isMusic) {
+      base.push({
+        id: '_spotify',
+        header: 'Listen',
+        accessorFn: (row) => String(row.item_data.title ?? ''),
+        cell: ({ row }) => {
+          const title = String(row.original.item_data.title ?? '').trim()
+          const artist = String(row.original.item_data.artist ?? '').trim()
+          if (!title) return <span className="text-muted-foreground text-xs">—</span>
+          const q = encodeURIComponent([title, artist].filter(Boolean).join(' '))
+          return (
+            <a
+              href={`https://open.spotify.com/search/${q}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary hover:underline whitespace-nowrap"
+              title="Search this on Spotify"
+            >
+              Spotify →
+            </a>
           )
         },
         enableSorting: false,
@@ -1326,7 +1353,7 @@ export default function CategoryPage() {
 
     return base
   }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations,
-      isBoardGames, bggLinks, isMtg, isAnime, isFood, recipeCards, slug,
+      isBoardGames, bggLinks, isMtg, isAnime, isFood, isMusic, recipeCards, slug,
       isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
       updateMALStatus, updateMALScore, searchMAL, deleteMALLink,
       igdbLinks, deleteIGDBLink, updateIGDBScore, openIGDBModal,
