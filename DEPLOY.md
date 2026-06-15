@@ -1,5 +1,19 @@
 # Deploying Trove
 
+## Live deployment (current)
+
+| Piece | URL | Host |
+|-------|-----|------|
+| Web (SPA) | https://trovefeed.vercel.app | Vercel (Hobby) |
+| API | https://trove-api-ncuc.onrender.com | Render (free tier — flip to `starter` for always-on/mobile) |
+| DB / Auth | Supabase (managed) | — |
+
+Wiring in effect: web `VITE_API_URL` → the Render API; API `CORS_ORIGINS=https://trovefeed.vercel.app`;
+Supabase auth redirect URLs include the Vercel origin; Mapbox uses a URL-restricted
+public token. Both hosts auto-deploy from `main`.
+
+---
+
 Architecture: **one always-on Node API serves all clients**; the web SPA is a
 static front-end on a CDN. Supabase is already managed.
 
