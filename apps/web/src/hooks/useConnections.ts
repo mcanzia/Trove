@@ -34,9 +34,9 @@ export async function saveRedditCredential(cookie: string, username: string): Pr
   if (!res.ok) throw new Error(await errorOf(res, "Couldn't save your Reddit cookie"))
 }
 
-/** Store the user's pasted Instagram sessionid (verified server-side before saving). */
-export async function saveInstagramCredential(sessionid: string, username: string): Promise<void> {
-  const res = await api.api.connections.instagram.credential.$post({ json: { sessionid, username } })
+/** Store the user's pasted Instagram cookie (verified server-side before saving). */
+export async function saveInstagramCredential(cookie: string, username: string): Promise<void> {
+  const res = await api.api.connections.instagram.credential.$post({ json: { cookie, username } })
   if (!res.ok) throw new Error(await errorOf(res, "Couldn't save your Instagram session"))
 }
 

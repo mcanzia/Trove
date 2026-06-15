@@ -106,8 +106,10 @@ same env as the Actions secrets above (minus `MODELS_TOKEN`). It runs the identi
 ## Instagram
 
 Same architecture, reusing the entire stack (connection_secrets, sync_jobs queue,
-worker, per-user scoping, progress UI). The credential is the Instagram
-**`sessionid`** cookie; the worker builds an instaloader session from it.
+worker, per-user scoping, progress UI). The credential is the **full instagram.com
+cookie** (it must include `sessionid` **and** `csrftoken` — the GraphQL fetch 403s
+without csrftoken); the worker sets all cookies + the `X-CSRFToken` header and
+builds an instaloader session from them.
 
 **One-time DB delta:** run `SavedPosts/db/migrate_instagram_ingestion.sql` in the
 Supabase SQL editor (prod + staging). *(Already applied during implementation.)*
@@ -121,8 +123,9 @@ other table/column is already platform-agnostic.
 analyze → save → done.
 
 **How a user connects:** `/connections` → Instagram → instagram.com (logged in) →
-DevTools → Application → Cookies → copy the `sessionid` value → paste with the
-username → Connect & sync.
+DevTools → Network → first instagram.com request → copy the entire `cookie:`
+request-header value (includes sessionid + csrftoken) → paste with the username →
+Connect & sync.
 
 **Caveats (it's flagged "experimental" in the UI):**
 - Instagram aggressively invalidates sessions used from a new IP, so a `sessionid`
