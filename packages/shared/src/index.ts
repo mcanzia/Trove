@@ -137,6 +137,17 @@ export interface IGDBLink {
   releaseYear: number | null
 }
 
+export interface SpotifyLink {
+  trackId: string | null
+  trackUrl: string | null
+  trackName: string | null
+  artistName: string | null
+  albumName: string | null
+  albumArtUrl: string | null
+  previewUrl: string | null
+  popularity: number | null
+}
+
 export interface MALLinkData {
   malAnimeId: number
   seriesTitle: string | null
