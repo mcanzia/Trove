@@ -80,6 +80,13 @@ It runs on `repository_dispatch` (the API's instant trigger), a 6h cron backstop
 and the manual "Run workflow" button. ffmpeg is installed in-workflow, so IG video
 works. **Cost:** idle is ~free (sparse cron); you only spend minutes on real syncs.
 
+**Recurring auto-sync:** `.github/workflows/auto-sync.yml` runs daily (07:00 UTC) —
+`worker/enqueue_due.py` queues a sync for every **connected + approved**
+user/platform, then drains. So connecting an account subscribes it to a daily
+refresh (revoked/expired cookies are skipped). Users can still "Sync now" any time
+between runs. Same secrets as the drainer; cost scales with user count (IG vision
+is the heavy one), so widen the cadence in that workflow's `cron` if it grows.
+
 #### Optional: paid always-on worker (Render)
 Only if you outgrow Actions' free minutes. Create a Blueprint from
 `SavedPosts/render.yaml` (`trove-sync-worker`, `plan: starter`, ~$7/mo) and set the
