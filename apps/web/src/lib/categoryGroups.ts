@@ -1,7 +1,7 @@
 import type { Category } from '@/types'
 
 export const CATEGORY_GROUPS: { label: string; categories: string[] }[] = [
-  { label: 'Watch & Play', categories: ['Anime & Manga','Board Games','D&D Character Builds','Magic: The Gathering','Movies & Film Recommendations','TV Series Recommendations','Video Game Recommendations','Viral Videos & Entertainment'] },
+  { label: 'Watch & Play', categories: ['Anime & Manga','Board Games','D&D Character Builds','Magic: The Gathering','Movies & Film Recommendations','Music Recommendations','TV Series Recommendations','Video Game Recommendations','Viral Videos & Entertainment'] },
   { label: 'Read & Learn', categories: ['Books Worth Reading','ChatGPT & AI Tools','Interesting Facts & Science','Language & Learning','News & Current Events','Pixel Art & Animation','Web Development & Programming'] },
   { label: 'Food & Home', categories: ['Food & Cooking','Food Science & Nutrition','Home & Kitchen Products','DIY & Crafts','Plants & Gardening'] },
   { label: 'Health & Wellness', categories: ["Crohn's Disease & IBD Support",'Fitness & Weight Gain','Self-Improvement & Wellness','Skincare & Acne Treatment','Fashion & Beauty','Pets & Animal Care','Life Hacks & Productivity'] },
