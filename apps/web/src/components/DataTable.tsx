@@ -62,9 +62,18 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
   const rangeStart = filteredCount === 0 ? 0 : pageIndex * pageSize + 1
   const rangeEnd = Math.min((pageIndex + 1) * pageSize, filteredCount)
 
+  // Mobile (stacked-card) helpers — see the md:hidden block below.
+  const rows = table.getRowModel().rows
+  const headerByColId = Object.fromEntries(table.getFlatHeaders().map((h) => [h.column.id, h]))
+  const sortableColumns = table.getAllColumns().filter((c) => c.getCanSort() && c.getIsVisible())
+  const colLabel = (c: (typeof sortableColumns)[number]) =>
+    typeof c.columnDef.header === 'string' ? c.columnDef.header : c.id
+  const activeSort = sorting[0]
+
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border bg-card overflow-hidden shadow-xs">
+      {/* Desktop / tablet: the full table (horizontally scrollable if wide) */}
+      <div className="hidden md:block rounded-xl border bg-card overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -137,6 +146,63 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
             </TableBody>
           </Table>
         </div>
+      </div>
+
+      {/* Mobile: stacked cards + a sort control (the wide table is hard to read at phone width) */}
+      <div className="md:hidden">
+        {rows.length > 0 && sortableColumns.length > 0 && (
+          <div className="mb-3 flex items-center gap-2">
+            <label htmlFor="mobile-sort" className="shrink-0 text-xs text-muted-foreground">Sort by</label>
+            <select
+              id="mobile-sort"
+              value={activeSort?.id ?? ''}
+              onChange={(e) =>
+                setSorting(e.target.value ? [{ id: e.target.value, desc: activeSort?.desc ?? false }] : [])
+              }
+              className="min-w-0 flex-1 rounded-lg border bg-card px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <option value="">Default</option>
+              {sortableColumns.map((c) => (
+                <option key={c.id} value={c.id}>{colLabel(c)}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => activeSort && setSorting([{ id: activeSort.id, desc: !activeSort.desc }])}
+              disabled={!activeSort}
+              aria-label="Toggle sort direction"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border hover:bg-muted disabled:opacity-40 disabled:hover:bg-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {activeSort?.desc ? <ArrowDown size={16} /> : <ArrowUp size={16} />}
+            </button>
+          </div>
+        )}
+
+        {rows.length ? (
+          <div className="space-y-3">
+            {rows.map((row) => (
+              <div key={row.id} className="rounded-xl border bg-card p-3.5 shadow-xs divide-y divide-border/50">
+                {row.getVisibleCells().map((cell) => {
+                  const h = headerByColId[cell.column.id]
+                  return (
+                    <div key={cell.id} className="py-2 first:pt-0 last:pb-0">
+                      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                        {h && !h.isPlaceholder ? flexRender(h.column.columnDef.header, h.getContext()) : null}
+                      </div>
+                      <div className="mt-0.5 text-sm break-words">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-xl border bg-card">
+            <EmptyState icon={SearchX} title="No results" description="Try a different search or filter." />
+          </div>
+        )}
       </div>
 
       {/* Pagination */}
