@@ -62,7 +62,7 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
   const rangeStart = filteredCount === 0 ? 0 : pageIndex * pageSize + 1
   const rangeEnd = Math.min((pageIndex + 1) * pageSize, filteredCount)
 
-  // Mobile (stacked-card) helpers — see the md:hidden block below.
+  // Mobile (stacked-card) helpers — see the sm:hidden block below.
   const rows = table.getRowModel().rows
   const headerByColId = Object.fromEntries(table.getFlatHeaders().map((h) => [h.column.id, h]))
   const sortableColumns = table.getAllColumns().filter((c) => c.getCanSort() && c.getIsVisible())
@@ -73,7 +73,7 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
   return (
     <div className="space-y-4">
       {/* Desktop / tablet: the full table (horizontally scrollable if wide) */}
-      <div className="hidden md:block rounded-xl border bg-card overflow-hidden shadow-xs">
+      <div className="hidden sm:block rounded-xl border bg-card overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -149,7 +149,7 @@ export function DataTable<TData>({ columns, data, globalFilter }: DataTableProps
       </div>
 
       {/* Mobile: stacked cards + a sort control (the wide table is hard to read at phone width) */}
-      <div className="md:hidden">
+      <div className="sm:hidden">
         {rows.length > 0 && sortableColumns.length > 0 && (
           <div className="mb-3 flex items-center gap-2">
             <label htmlFor="mobile-sort" className="shrink-0 text-xs text-muted-foreground">Sort by</label>

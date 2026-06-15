@@ -128,7 +128,8 @@ function GeminiPanel({ models }: { models: GeminiModelUsage[] }) {
     <div className="mt-6">
       <h2 className="mb-1 font-display text-lg font-semibold text-foreground">Gemini — per-model (live)</h2>
       <p className="mb-3 text-xs text-muted-foreground">Authoritative quota usage from Google Cloud Monitoring · RPD resets midnight Pacific</p>
-      <div className="rounded-xl border bg-card">
+      {/* Desktop/tablet: table */}
+      <div className="hidden rounded-xl border bg-card sm:block">
         <Table>
           <TableHeader>
             <TableRow>
@@ -149,6 +150,22 @@ function GeminiPanel({ models }: { models: GeminiModelUsage[] }) {
             ))}
           </TableBody>
         </Table>
+      </div>
+      {/* Mobile: card per model */}
+      <div className="space-y-3 sm:hidden">
+        {models.map((m) => (
+          <div key={m.model} className="rounded-xl border bg-card p-3.5 shadow-xs">
+            <div className="mb-2 text-sm font-medium">{m.model}</div>
+            <div className="space-y-1.5">
+              {([['RPD (today)', m.rpd.used, m.rpd.limit], ['RPM (peak)', m.rpm.peak, m.rpm.limit], ['TPM (peak)', m.tpm.peak, m.tpm.limit]] as const).map(([label, used, limit]) => (
+                <div key={label} className="flex items-center justify-between gap-3">
+                  <span className="text-xs text-muted-foreground">{label}</span>
+                  <UsageBar used={used} limit={limit} />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -250,7 +267,7 @@ export default function AdminPage() {
           description="Once the pipeline runs with telemetry enabled, provider calls will appear here. Make sure the ai_usage_events table exists and the pipeline has SUPABASE_URL/SUPABASE_KEY set."
         />
       ) : (
-        <div className="rounded-xl border bg-card">
+        <div className="hidden rounded-xl border bg-card sm:block">
           <Table>
             <TableHeader>
               <TableRow>
@@ -302,6 +319,50 @@ export default function AdminPage() {
               })}
             </TableBody>
           </Table>
+        </div>
+      )}
+
+      {/* Mobile: card per provider */}
+      {!error && !isLoading && data && data.providers.length > 0 && (
+        <div className="space-y-3 sm:hidden">
+          {data.providers.map((p) => {
+            const unused = p.calls === 0
+            return (
+              <div key={p.provider} className={`rounded-xl border bg-card p-3.5 shadow-xs ${unused ? 'opacity-55' : ''}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="font-medium">{p.provider}</div>
+                    {p.models.length > 0 && (
+                      <div className="truncate text-[11px] text-muted-foreground">{p.models.join(', ')}</div>
+                    )}
+                  </div>
+                  <StatusChip status={p.status} />
+                </div>
+                {unused ? (
+                  <div className="mt-2 text-xs text-muted-foreground">Tasks {p.tasks.join(', ') || '—'}</div>
+                ) : (
+                  <>
+                    <div className="mt-3 flex items-center gap-4 text-sm text-muted-foreground">
+                      <span>Calls <span className="tabular-nums text-foreground">{p.calls.toLocaleString()}</span></span>
+                      <span className="inline-flex items-center gap-1">Success{' '}
+                        <span className="inline-flex items-center gap-1 tabular-nums text-foreground">
+                          {p.successRate >= 0.95 && <CheckCircle2 size={13} className="text-emerald-500" aria-hidden />}
+                          {(p.successRate * 100).toFixed(0)}%
+                        </span>
+                      </span>
+                    </div>
+                    <div className="mt-2"><MixBar p={p} /></div>
+                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                      <span title={headroom(p).title}>Headroom <span className="tabular-nums text-foreground">{headroom(p).label}</span></span>
+                      {p.costUsd > 0 && <span>Cost <span className="tabular-nums text-foreground">{fmtUsd(p.costUsd)}</span></span>}
+                      <span className="inline-flex items-center gap-1"><Clock size={12} aria-hidden />{relTime(p.lastSeen)}</span>
+                      {p.tasks.length > 0 && <span>Tasks <span className="text-foreground">{p.tasks.join(', ')}</span></span>}
+                    </div>
+                  </>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
