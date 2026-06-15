@@ -43,6 +43,12 @@ export const syncJobs = new Hono<AppEnv>()
   .post('/', async (c) => {
     const supabase = c.get('supabase')
     const userId = c.get('userId')
+
+    // Enqueuing a sync is gated on owner approval (RLS enforces this too).
+    const { data: access } = await supabase
+      .from('user_access').select('status').eq('user_id', userId).maybeSingle()
+    if (access?.status !== 'approved') return c.json({ error: 'pending_approval' }, 403)
+
     const body = (await c.req.json().catch(() => ({}))) as { platform?: string }
     const platform = platformOf(body.platform)
 

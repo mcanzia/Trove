@@ -51,3 +51,20 @@ export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
   }
   await next()
 })
+
+/**
+ * Gate sync features behind owner approval. Runs after requireAuth. Reads the
+ * caller's own user_access row (RLS allows own-read) and 403s unless approved.
+ * New users are 'pending' until the owner approves them at /admin.
+ */
+export const requireApproved = createMiddleware<AppEnv>(async (c, next) => {
+  const { data } = await c.get('supabase')
+    .from('user_access')
+    .select('status')
+    .eq('user_id', c.get('userId'))
+    .maybeSingle()
+  if (data?.status !== 'approved') {
+    return c.json({ error: 'pending_approval' }, 403)
+  }
+  await next()
+})

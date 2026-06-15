@@ -13,6 +13,8 @@ import { stats } from './routes/stats.js'
 import { aiUsage } from './routes/aiUsage.js'
 import { connections } from './routes/connections.js'
 import { syncJobs } from './routes/syncJobs.js'
+import { access } from './routes/access.js'
+import { adminUsers } from './routes/adminUsers.js'
 
 export const app = new Hono<AppEnv>()
 
@@ -44,6 +46,8 @@ const routes = app
   .route('/api/ai-usage', aiUsage)
   .route('/api/connections', connections)
   .route('/api/sync-jobs', syncJobs)
+  .route('/api/access', access)
+  .route('/api/admin/users', adminUsers)
 
 // Export the app's type so the Trove frontend can later use Hono's typed
 // client:  const client = hc<AppType>(API_URL)  → fully typed requests.
