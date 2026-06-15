@@ -12,6 +12,15 @@ const schema = z.object({
   // Comma-separated admin emails allowed to hit /api/ai-usage/* (the dashboard).
   // Fail-closed: if unset, no one is admin.
   ADMIN_EMAILS: z.string().optional(),
+  // Reddit ingestion (multi-user). Optional so the API boots without it;
+  // /api/connections/reddit/credential only works once it's set. base64 of 32
+  // bytes — encrypts the user's pasted cookie; MUST match the worker's value.
+  REDDIT_TOKEN_ENC_KEY: z.string().min(1).optional(),
+  // Optional: fire a GitHub repository_dispatch when a sync is enqueued so the
+  // Actions queue-drainer runs immediately (else the 6h cron picks it up). Token
+  // needs Actions: write on the SavedPosts repo. REPO is "owner/name".
+  GH_DISPATCH_TOKEN: z.string().min(1).optional(),
+  GH_DISPATCH_REPO: z.string().min(1).optional(),
   // Optional: enables the admin dashboard's live OpenRouter balance/budget panel
   // (/api/ai-usage/openrouter). Held server-side only — never sent to the client.
   OPENROUTER_API_KEY: z.string().min(1).optional(),

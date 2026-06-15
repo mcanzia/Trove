@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
-import { Gem, Search, Sun, Moon, Gauge } from 'lucide-react'
+import { Gem, Search, Sun, Moon, Gauge, Link2 } from 'lucide-react'
 import { useCategories } from '@/hooks/useCategories'
 import { useStats } from '@/hooks/useStats'
 import { getCategoryTheme } from '@/lib/categoryConfig'
@@ -107,6 +107,17 @@ export function Sidebar({ onOpenPalette, onNavigate }: SidebarProps) {
           {stats ? `${stats.total.toLocaleString()} items saved` : ''}
         </span>
         <div className="flex items-center gap-1">
+          <Link
+            to="/connections"
+            onClick={onNavigate}
+            aria-label="Connections"
+            aria-current={location.pathname === '/connections' ? 'page' : undefined}
+            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring ${
+              location.pathname === '/connections' ? 'text-gold' : 'text-muted-foreground'
+            }`}
+          >
+            <Link2 size={16} aria-hidden />
+          </Link>
           {admin && (
             <Link
               to="/admin"
