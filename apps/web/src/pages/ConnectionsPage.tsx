@@ -7,6 +7,8 @@ import {
 } from '@/hooks/useConnections'
 import { useSyncJob, enqueueSync, type Platform, type SyncJob } from '@/hooks/useSyncJob'
 import { SyncProgress } from '@/components/SyncProgress'
+import { useAccess } from '@/hooks/useAccess'
+import { Clock, Ban } from 'lucide-react'
 
 function relTime(iso: string | null): string {
   if (!iso) return 'never'
@@ -213,8 +215,27 @@ const INSTAGRAM_CFG: CardConfig = {
   ],
 }
 
+function AccessGate({ status }: { status: 'pending' | 'blocked' }) {
+  const pending = status === 'pending'
+  const Icon = pending ? Clock : Ban
+  return (
+    <div className="rounded-xl border bg-card p-6 text-center">
+      <Icon size={28} className={`mx-auto mb-3 ${pending ? 'text-amber-500' : 'text-red-500'}`} aria-hidden />
+      <div className="font-medium text-foreground">
+        {pending ? 'Your account is pending approval' : 'Your account access is blocked'}
+      </div>
+      <p className="mx-auto mt-1.5 max-w-sm text-sm text-muted-foreground">
+        {pending
+          ? 'Syncing is enabled once the owner approves your account. You can browse in the meantime — check back soon.'
+          : 'Your access to sync features has been disabled. Reach out to the owner if you think this is a mistake.'}
+      </p>
+    </div>
+  )
+}
+
 export default function ConnectionsPage() {
   const { data: connections, isLoading } = useConnections()
+  const { data: accessStatus, isLoading: accessLoading } = useAccess()
   const byPlatform = (p: Platform) => connections?.find((c) => c.platform === p)
 
   return (
@@ -225,8 +246,10 @@ export default function ConnectionsPage() {
         encrypted and used only to fetch your saves.
       </p>
 
-      {isLoading ? (
+      {isLoading || accessLoading ? (
         <div className="text-sm text-muted-foreground">Loading…</div>
+      ) : accessStatus !== 'approved' ? (
+        <AccessGate status={accessStatus === 'blocked' ? 'blocked' : 'pending'} />
       ) : (
         <div className="space-y-4">
           <PlatformCard cfg={REDDIT_CFG} connection={byPlatform('reddit')} />

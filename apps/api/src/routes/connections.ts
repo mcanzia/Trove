@@ -3,6 +3,7 @@ import type { AppEnv } from '../lib/context.js'
 import { env } from '../lib/env.js'
 import { supabaseAdmin } from '../lib/supabaseAdmin.js'
 import { encryptToken } from '../lib/crypto.js'
+import { requireApproved } from '../middleware/auth.js'
 
 const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
@@ -83,6 +84,9 @@ async function storeCredential(
 }
 
 export const connections = new Hono<AppEnv>()
+  // Storing a credential is a sync feature — approved users only.
+  .use('/reddit/credential', requireApproved)
+  .use('/instagram/credential', requireApproved)
   .get('/', async (c) => {
     const { data, error } = await c.get('supabase')
       .from('connections')

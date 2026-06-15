@@ -3,6 +3,7 @@ import { Activity, AlertTriangle, CheckCircle2, CircleDollarSign, Clock, Cpu, Za
 import { useAiUsage, useOpenRouterLive, useCloudflareLive, useGeminiLive, type ProviderStatus, type ProviderUsage, type GeminiModelUsage } from '@/hooks/useAiUsage'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { UsersPanel } from '@/components/admin/UsersPanel'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
@@ -408,6 +409,9 @@ export default function AdminPage() {
       {gemini?.available && gemini.error && (
         <p className="mt-4 text-xs text-amber-600 dark:text-amber-400">Gemini live usage unavailable: {gemini.error}</p>
       )}
+
+      {/* Users & access — approve new accounts before they can sync */}
+      <UsersPanel />
     </div>
   )
 }
