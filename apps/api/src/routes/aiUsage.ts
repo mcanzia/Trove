@@ -188,7 +188,7 @@ export const aiUsage = new Hono<AppEnv>()
         fetch('https://openrouter.ai/api/v1/credits', { headers }),
       ])
       if (!keyRes.ok || !creditsRes.ok) {
-        return c.json({ available: true as const, error: `OpenRouter API ${keyRes.status}/${creditsRes.status}` }, 502)
+        return c.json({ available: true as const, error: `OpenRouter API ${keyRes.status}/${creditsRes.status}` })
       }
       const keyData = ((await keyRes.json()) as { data?: Record<string, unknown> }).data ?? {}
       const credits = ((await creditsRes.json()) as { data?: Record<string, unknown> }).data ?? {}
@@ -209,7 +209,7 @@ export const aiUsage = new Hono<AppEnv>()
         isFreeTier: Boolean(keyData.is_free_tier),
       })
     } catch (e) {
-      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' }, 502)
+      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' })
     }
   })
   .get('/cloudflare', async (c) => {
@@ -235,7 +235,7 @@ export const aiUsage = new Hono<AppEnv>()
       }
       if (body.errors?.length) {
         // Most likely the token lacks Account Analytics: Read.
-        return c.json({ available: true as const, error: body.errors[0]?.message ?? 'analytics query failed' }, 502)
+        return c.json({ available: true as const, error: body.errors[0]?.message ?? 'analytics query failed' })
       }
       const groups = body.data?.viewer?.accounts?.[0]?.aiInferenceAdaptiveGroups ?? []
       const byDay = groups.map((g) => ({ date: g.dimensions.date, neurons: g.sum.totalNeurons, requests: g.count }))
@@ -250,7 +250,7 @@ export const aiUsage = new Hono<AppEnv>()
         byDay,
       })
     } catch (e) {
-      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' }, 502)
+      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'fetch failed' })
     }
   })
   .get('/gemini', async (c) => {
@@ -260,6 +260,6 @@ export const aiUsage = new Hono<AppEnv>()
       c.header('Cache-Control', 'max-age=60')
       return c.json({ available: true as const, generatedAt: new Date().toISOString(), models })
     } catch (e) {
-      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'monitoring query failed' }, 502)
+      return c.json({ available: true as const, error: e instanceof Error ? e.message : 'monitoring query failed' })
     }
   })
