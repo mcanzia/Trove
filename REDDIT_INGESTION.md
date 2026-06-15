@@ -1,11 +1,12 @@
-# Multi-user Reddit ingestion — setup
+# Multi-user ingestion (Reddit + Instagram) — setup
 
-Lets any signed-in user connect their **own** Reddit account by pasting their
-browser cookie, sync their saved posts, and watch progress — all scoped to their
-`user_id` (existing RLS already isolates content per user). **No Reddit API app
-is required** (Reddit gated self-serve app creation behind manual approval in
-2026); the user pastes the same kind of cookie the single-tenant pipeline uses.
-Instagram works the same way and is a fast follow.
+Lets any signed-in user connect their **own** Reddit and Instagram accounts by
+pasting a browser credential, sync their saved posts, and watch progress — all
+scoped to their `user_id` (existing RLS already isolates content per user).
+**No platform API app is required** (Reddit gated self-serve app creation behind
+manual approval in 2026); the user pastes the same kind of credential the
+single-tenant pipeline uses — a cookie for Reddit, a `sessionid` for Instagram.
+See the Instagram section at the bottom for its specifics.
 
 ## Architecture
 ```
@@ -80,3 +81,40 @@ Create a Blueprint service from `SavedPosts/render.yaml` (`trove-sync-worker`,
    role can read it); worker logs contain no cookie.
 5. Paste a bad/expired cookie → the API rejects it at save time; an expired
    cookie discovered mid-sync marks the connection `revoked` with a re-paste prompt.
+
+## Instagram
+
+Same architecture, reusing the entire stack (connection_secrets, sync_jobs queue,
+worker, per-user scoping, progress UI). The credential is the Instagram
+**`sessionid`** cookie; the worker builds an instaloader session from it.
+
+**One-time DB delta:** run `SavedPosts/db/migrate_instagram_ingestion.sql` in the
+Supabase SQL editor (prod + staging). *(Already applied during implementation.)*
+It just widens the `connections.platform` CHECK to allow `'instagram'` — every
+other table/column is already platform-agnostic.
+
+**Pipeline** (per IG sync, in the isolated dir): pull(scoped) → `sync_instagram`
+(sessionid → session) → `transcribe_instagram_videos` → `analyze_instagram_images`
+→ `analyze_instagram --classify-only` → `--analyze-only` → `sync_to_supabase
+--instagram-only`. Progress phases: fetch → transcribe → read images → classify →
+analyze → save → done.
+
+**How a user connects:** `/connections` → Instagram → instagram.com (logged in) →
+DevTools → Application → Cookies → copy the `sessionid` value → paste with the
+username → Connect & sync.
+
+**Caveats (it's flagged "experimental" in the UI):**
+- Instagram aggressively invalidates sessions used from a new IP, so a `sessionid`
+  pasted from a home browser may expire within a day or two once the worker (a
+  datacenter IP) uses it — the user just re-pastes. A logged-out session mid-sync
+  marks the connection `revoked`.
+- **Video transcription needs `ffmpeg`** on the worker (fetched as a static binary
+  in `render.yaml`'s build). Image/carousel posts (the bulk of IG saves) use vision
+  OCR and need no ffmpeg. Both the transcribe and image-vision steps are
+  **best-effort** — a failure falls back to caption/hashtag text instead of failing
+  the whole sync.
+- IG vision/transcription can be a lot of LLM calls on a cold backlog; the
+  free-first cascade + OpenRouter daily budget guard bound the cost.
+- The server-side verify is lenient (IG blocks datacenter IPs unpredictably): it
+  rejects only an explicit logged-out signal, otherwise saves and lets the worker
+  be the real validator.

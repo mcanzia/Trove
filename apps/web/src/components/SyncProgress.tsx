@@ -1,9 +1,19 @@
 import { CheckCircle2, Loader2, AlertTriangle } from 'lucide-react'
 import type { SyncJob, JobPhase } from '@/hooks/useSyncJob'
 
-const PHASES: { key: JobPhase; label: string }[] = [
+const REDDIT_PHASES: { key: JobPhase; label: string }[] = [
   { key: 'fetch_saved', label: 'Fetch saved posts' },
   { key: 'fetch_comments', label: 'Fetch comments' },
+  { key: 'classify', label: 'Classify' },
+  { key: 'analyze', label: 'Analyze' },
+  { key: 'sync', label: 'Save' },
+  { key: 'done', label: 'Done' },
+]
+
+const INSTAGRAM_PHASES: { key: JobPhase; label: string }[] = [
+  { key: 'fetch_saved', label: 'Fetch saved posts' },
+  { key: 'transcribe', label: 'Transcribe videos' },
+  { key: 'vision', label: 'Read images' },
   { key: 'classify', label: 'Classify' },
   { key: 'analyze', label: 'Analyze' },
   { key: 'sync', label: 'Save' },
@@ -13,6 +23,8 @@ const PHASES: { key: JobPhase; label: string }[] = [
 export function SyncProgress({ job }: { job: SyncJob }) {
   const failed = job.status === 'failed'
   const succeeded = job.status === 'succeeded'
+  const isIg = job.platform === 'instagram'
+  const PHASES = isIg ? INSTAGRAM_PHASES : REDDIT_PHASES
   const currentIdx = PHASES.findIndex((p) => p.key === job.phase)
 
   return (
@@ -23,7 +35,7 @@ export function SyncProgress({ job }: { job: SyncJob }) {
         ) : succeeded ? (
           <><CheckCircle2 size={16} className="text-emerald-500" /> Sync complete</>
         ) : (
-          <><Loader2 size={16} className="animate-spin text-gold" /> Syncing your Reddit saves…</>
+          <><Loader2 size={16} className="animate-spin text-gold" /> Syncing your {isIg ? 'Instagram' : 'Reddit'} saves…</>
         )}
       </div>
 
