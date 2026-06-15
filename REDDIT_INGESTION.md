@@ -14,10 +14,18 @@ Web /connections (paste cookie) → API POST /api/connections/reddit/credential
   → API verifies the cookie (one live saved-posts fetch), then AES-GCM encrypts
     it into connection_secrets (service role; RLS deny-all)
 Web → POST /api/sync-jobs (status=pending, RLS owner-insert)
-  → Render WORKER polls sync_jobs (claim_sync_job) → runs the per-user pipeline
+  → API fires a GitHub repository_dispatch (sync-requested)
+  → WORKER claims the job (claim_sync_job) → runs the per-user pipeline
     (isolated /tmp dir, every read/upsert/prune scoped to the user) → updates phase/counts
   → Web SyncProgress (Supabase Realtime + polling) shows live progress
 ```
+
+**The worker is free GitHub Actions by default** (`.github/workflows/sync-worker.yml`,
+`run_worker.py --drain`): the API's dispatch wakes it on demand, and a 6h cron
+backstops anything missed. The same `run_worker.py` runs in serve-mode on the
+optional paid Render worker (`render.yaml`) if you ever outgrow Actions' free
+minutes. The queue/scoping/pipeline are host-agnostic — only the thing calling
+`claim_sync_job()` changes.
 
 Spans both repos: **SavedPosts** (schema, per-user pipeline, worker) and **Trove**
 (API credential + sync-jobs routes, web UI).
@@ -54,16 +62,29 @@ worker (API encrypts the cookie, worker decrypts it).
 
 ### 3. API env (Render — `trove-api`)
 Set `REDDIT_TOKEN_ENC_KEY`. Ensure `SUPABASE_SERVICE_ROLE_KEY` is set (the
-credential route writes via the service role). *(No Reddit client id/secret or
-redirect URI — those are gone with OAuth.)*
+credential route writes via the service role). To make syncs start instantly
+(instead of waiting for the worker's cron), also set:
+- `GH_DISPATCH_TOKEN` — a GitHub token with **Actions: write** on the SavedPosts repo
+- `GH_DISPATCH_REPO` — e.g. `mcanzia/saved-posts-claude`
 
-### 4. Worker (Render — new service)
-Create a Blueprint service from `SavedPosts/render.yaml` (`trove-sync-worker`,
-`plan: starter`). Set its `sync:false` env:
+### 4. Worker — GitHub Actions (free, default)
+No service to create. `.github/workflows/sync-worker.yml` drains the queue on
+Actions (`run_worker.py --drain`). Add these **GitHub Actions secrets** to the
+SavedPosts repo (Settings → Secrets and variables → Actions):
 - `SUPABASE_URL`, `SUPABASE_KEY` (**service role**)
 - `REDDIT_TOKEN_ENC_KEY` (same value as the API)
 - LLM keys: `GEMINI_API_KEY`, `GROQ_API_KEY`, `CEREBRAS_API_KEY`,
-  `SAMBANOVA_API_KEY`, `OPENROUTER_API_KEY`
+  `SAMBANOVA_API_KEY`, `OPENROUTER_API_KEY`, `MODELS_TOKEN`
+
+It runs on `repository_dispatch` (the API's instant trigger), a 6h cron backstop,
+and the manual "Run workflow" button. ffmpeg is installed in-workflow, so IG video
+works. **Cost:** idle is ~free (sparse cron); you only spend minutes on real syncs.
+
+#### Optional: paid always-on worker (Render)
+Only if you outgrow Actions' free minutes. Create a Blueprint from
+`SavedPosts/render.yaml` (`trove-sync-worker`, `plan: starter`, ~$7/mo) and set the
+same env as the Actions secrets above (minus `MODELS_TOKEN`). It runs the identical
+`run_worker.py` in serve-mode (polls forever, ~5s latency).
 
 ## How a user connects (in-app)
 1. Open `/connections` → **Reddit** → expand "How do I get my Reddit cookie?".
