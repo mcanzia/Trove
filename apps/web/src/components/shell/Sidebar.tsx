@@ -6,6 +6,8 @@ import { getCategoryTheme } from '@/lib/categoryConfig'
 import { groupCategories } from '@/lib/categoryGroups'
 import { toSlug } from '@/lib/utils'
 import { useTheme } from '@/components/shell/ThemeProvider'
+import { useAuth } from '@/lib/auth'
+import { isAdmin } from '@/lib/admin'
 import { Kbd } from '@/components/ui/Kbd'
 
 interface SidebarProps {
@@ -19,6 +21,8 @@ export function Sidebar({ onOpenPalette, onNavigate }: SidebarProps) {
   const { data: categories } = useCategories()
   const { data: stats, isLoading: statsLoading } = useStats()
   const { resolved, toggle } = useTheme()
+  const { session } = useAuth()
+  const admin = isAdmin(session?.user?.email)
   const location = useLocation()
 
   const groups = categories ? groupCategories(categories) : []
@@ -103,17 +107,19 @@ export function Sidebar({ onOpenPalette, onNavigate }: SidebarProps) {
           {stats ? `${stats.total.toLocaleString()} items saved` : ''}
         </span>
         <div className="flex items-center gap-1">
-          <Link
-            to="/admin"
-            onClick={onNavigate}
-            aria-label="AI usage dashboard"
-            aria-current={location.pathname === '/admin' ? 'page' : undefined}
-            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring ${
-              location.pathname === '/admin' ? 'text-gold' : 'text-muted-foreground'
-            }`}
-          >
-            <Gauge size={16} aria-hidden />
-          </Link>
+          {admin && (
+            <Link
+              to="/admin"
+              onClick={onNavigate}
+              aria-label="AI usage dashboard"
+              aria-current={location.pathname === '/admin' ? 'page' : undefined}
+              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-sidebar-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring ${
+                location.pathname === '/admin' ? 'text-gold' : 'text-muted-foreground'
+              }`}
+            >
+              <Gauge size={16} aria-hidden />
+            </Link>
+          )}
           <button
             type="button"
             onClick={toggle}

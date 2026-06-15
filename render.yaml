@@ -27,6 +27,10 @@ services:
                                      # needs a global WebSocket (Node <22 lacks it)
       # PORT is injected by Render automatically; the app reads env.PORT.
 
+      # ---- Admin allowlist for /api/ai-usage/* (the dashboard) ----
+      - key: ADMIN_EMAILS
+        value: canziani.developer@gmail.com
+
       # ---- Supabase (the shared contract) ----
       - key: SUPABASE_URL
         sync: false

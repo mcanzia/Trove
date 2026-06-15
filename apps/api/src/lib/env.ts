@@ -9,6 +9,9 @@ const schema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1).optional(),
+  // Comma-separated admin emails allowed to hit /api/ai-usage/* (the dashboard).
+  // Fail-closed: if unset, no one is admin.
+  ADMIN_EMAILS: z.string().optional(),
   // Optional: enables the admin dashboard's live OpenRouter balance/budget panel
   // (/api/ai-usage/openrouter). Held server-side only — never sent to the client.
   OPENROUTER_API_KEY: z.string().min(1).optional(),

@@ -3,6 +3,7 @@ import { zValidator } from '@hono/zod-validator'
 import { z } from 'zod'
 import type { AppEnv } from '../lib/context.js'
 import { env } from '../lib/env.js'
+import { requireAdmin } from '../middleware/auth.js'
 import { fetchGeminiUsage, geminiMonitoringAvailable } from '../lib/geminiMonitoring.js'
 
 /**
@@ -67,6 +68,8 @@ const KNOWN_PROVIDERS: { provider: string; models: string[]; tasks: string[] }[]
 ]
 
 export const aiUsage = new Hono<AppEnv>()
+  // Admin-only: requireAuth (mounted globally on /api/*) sets userEmail first.
+  .use('*', requireAdmin)
   .get('/', zValidator('query', z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })), async (c) => {
     const { days } = c.req.valid('query')
     const since = new Date(Date.now() - days * 86_400_000).toISOString()

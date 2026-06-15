@@ -1,6 +1,7 @@
 import { createMiddleware } from 'hono/factory'
 import { supabase, userClient } from '../lib/supabase.js'
 import type { AppEnv } from '../lib/context.js'
+import { env } from '../lib/env.js'
 
 /**
  * Require a valid Supabase session on /api/* routes.
@@ -28,6 +29,25 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
   }
 
   c.set('userId', data.user.id)
+  c.set('userEmail', data.user.email ?? null)
   c.set('supabase', userClient(token))
+  await next()
+})
+
+/**
+ * Restrict a route group to admin accounts (ADMIN_EMAILS, comma-separated).
+ * Runs AFTER requireAuth (which sets userEmail). Returns 403 for non-admins, so
+ * even a valid non-admin session can't reach admin endpoints. Fail-closed: if
+ * ADMIN_EMAILS is unset, nobody is admin.
+ */
+export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
+  const email = (c.get('userEmail') ?? '').toLowerCase()
+  const allowed = (env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean)
+  if (!email || !allowed.includes(email)) {
+    return c.json({ error: 'Forbidden — admin only' }, 403)
+  }
   await next()
 })
