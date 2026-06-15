@@ -6,6 +6,7 @@ import HomePage from '@/pages/HomePage'
 import CategoryPage from '@/pages/CategoryPage'
 import RecipePage from '@/pages/RecipePage'
 import AdminPage from '@/pages/AdminPage'
+import ConnectionsPage from '@/pages/ConnectionsPage'
 import MalCallback from '@/pages/MalCallback'
 import Login from '@/pages/Login'
 import AuthCallback from '@/pages/AuthCallback'
@@ -56,6 +57,7 @@ export default function App() {
       <Route element={<RequireAuth />}>
         <Route element={<AppShell />}>
           <Route path="/" element={<HomePage />} />
+          <Route path="/connections" element={<ConnectionsPage />} />
           <Route element={<RequireAdmin />}>
             <Route path="/admin" element={<AdminPage />} />
           </Route>
