@@ -94,7 +94,7 @@ export const aiUsage = new Hono<AppEnv>()
       if (page.length < PAGE) break
     }
 
-    const providers = new Map<string, Counts & { lastSeen: string; latestStatus: string; models: Set<string>; tasks: Set<string>; rateLimit: RateLimit | null }>()
+    const providers = new Map<string, Counts & { lastSeen: string; latestStatus: string; modelStats: Map<string, { calls: number; tokens: number }>; tasks: Set<string>; rateLimit: RateLimit | null }>()
     const byTask: Record<string, Counts> = { text: emptyCounts(), video: emptyCounts(), image: emptyCounts() }
     const byDay = new Map<string, Counts>()
     let totalCostUsd = 0
@@ -109,11 +109,16 @@ export const aiUsage = new Hono<AppEnv>()
       // rows are ts-desc, so the FIRST time we see a provider is its latest event
       let p = providers.get(r.provider)
       if (!p) {
-        p = { ...emptyCounts(), lastSeen: r.ts, latestStatus: r.status, models: new Set(), tasks: new Set(), rateLimit: null }
+        p = { ...emptyCounts(), lastSeen: r.ts, latestStatus: r.status, modelStats: new Map(), tasks: new Set(), rateLimit: null }
         providers.set(r.provider, p)
       }
       tally(p, r.status, cost, tokens)
-      if (r.model) p.models.add(r.model)
+      if (r.model) {
+        const ms = p.modelStats.get(r.model) ?? { calls: 0, tokens: 0 }
+        ms.calls += 1
+        ms.tokens += tokens
+        p.modelStats.set(r.model, ms)
+      }
       p.tasks.add(r.task)
       // rows are ts-desc → keep the most recent non-null rate-limit snapshot
       if (!p.rateLimit && r.rate_limit) p.rateLimit = r.rate_limit
@@ -126,10 +131,11 @@ export const aiUsage = new Hono<AppEnv>()
       tally(d, r.status, cost, tokens)
     }
 
+    type ModelStat = { model: string; calls: number; tokens: number }
     type ProviderRow = {
       provider: string; calls: number; ok: number; quota: number; budget: number; error: number
       successRate: number; costUsd: number; tokens: number; lastSeen: string | null; latestStatus: string
-      models: string[]; tasks: string[]; rateLimit: RateLimit | null
+      models: ModelStat[]; tasks: string[]; rateLimit: RateLimit | null
       status: 'healthy' | 'throttled' | 'exhausted' | 'idle'
     }
 
@@ -146,7 +152,9 @@ export const aiUsage = new Hono<AppEnv>()
         tokens: p.tokens,
         lastSeen: p.lastSeen as string | null,
         latestStatus: p.latestStatus,
-        models: [...p.models],
+        models: [...p.modelStats].
+          map(([model, s]) => ({ model, calls: s.calls, tokens: s.tokens })).
+          sort((a, b) => b.tokens - a.tokens || b.calls - a.calls),
         tasks: [...p.tasks],
         rateLimit: p.rateLimit,
         status: deriveStatus(p, p.latestStatus),
@@ -161,7 +169,7 @@ export const aiUsage = new Hono<AppEnv>()
       calls: 0, ok: 0, quota: 0, budget: 0, error: 0,
       successRate: 0, costUsd: 0, tokens: 0,
       lastSeen: null, latestStatus: 'idle',
-      models: k.models, tasks: k.tasks, rateLimit: null,
+      models: k.models.map((m) => ({ model: m, calls: 0, tokens: 0 })), tasks: k.tasks, rateLimit: null,
       status: 'idle' as const,
     }))
     const providerList = [...used, ...idle]
