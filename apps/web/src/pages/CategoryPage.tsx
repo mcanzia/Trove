@@ -5,7 +5,7 @@ import { type ColumnDef } from '@tanstack/react-table'
 import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '@/lib/supabase'
 
-import { ChevronDown, MapPin, Table2, Map as MapIcon, Search, Play, Tags } from 'lucide-react'
+import { ChevronDown, MapPin, Table2, Map as MapIcon, Search, Play, Tags, ArrowRightLeft } from 'lucide-react'
 import { getCategoryTheme } from '@/lib/categoryConfig'
 import { pushRecent } from '@/lib/recents'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -69,6 +69,7 @@ import { useRecipeCards } from '@/hooks/useRecipeCards'
 import { useInstagramStorefronts } from '@/hooks/useInstagramStorefronts'
 import { SavedPostsSection } from '@/components/SavedPostsSection'
 import { ReclassifyDialog, type ReclassifyTarget } from '@/components/ReclassifyDialog'
+import { MoveDialog, type MoveTarget } from '@/components/MoveDialog'
 import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
@@ -82,6 +83,7 @@ function buildColumns(
   onLocationClick?: (lat: number, lng: number, itemId: number) => void,
   locationsMap?: Map<number, { lat: number; lng: number; label: string; type: string }[]> | null,
   onReclassify?: (item: AnalysisItem) => void,
+  onMove?: (item: AnalysisItem) => void,
 ): ColumnDef<AnalysisItem, unknown>[] {
   const dynamic: ColumnDef<AnalysisItem, unknown>[] = fields
     .filter((f) => !hiddenKeys.includes(f.key))
@@ -196,25 +198,37 @@ function buildColumns(
       },
       enableSorting: false,
     },
-    ...(onReclassify ? [{
-      id: '_reclassify',
+    ...(onReclassify || onMove ? [{
+      id: '_actions',
       header: '',
-      // Only per-post highlights (those tied to a single source post) can be
-      // reclassified — aggregated items without a source_post_id are skipped.
-      cell: ({ row }: { row: { original: AnalysisItem } }) => {
-        if (!row.original.source_post_id) {
-          return <span className="text-muted-foreground text-xs">—</span>
-        }
-        return (
-          <button
-            onClick={() => onReclassify(row.original)}
-            title="Reclassify this post into another category"
-            className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground hover:text-foreground cursor-pointer"
-          >
-            <Tags size={12} /> Reclassify
-          </button>
-        )
-      },
+      // Reclassify needs a source post (per-post highlights only); Move works on any
+      // item (it relocates the item itself, not the post's extraction).
+      cell: ({ row }: { row: { original: AnalysisItem } }) => (
+        <div className="flex items-center gap-3">
+          {onReclassify && (
+            row.original.source_post_id ? (
+              <button
+                onClick={() => onReclassify(row.original)}
+                title="Reclassify this post into another category"
+                className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+              >
+                <Tags size={12} /> Reclassify
+              </button>
+            ) : (
+              <span className="text-muted-foreground text-xs">—</span>
+            )
+          )}
+          {onMove && (
+            <button
+              onClick={() => onMove(row.original)}
+              title="Move this entry to a different category"
+              className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <ArrowRightLeft size={12} /> Move
+            </button>
+          )}
+        </div>
+      ),
       enableSorting: false,
     } satisfies ColumnDef<AnalysisItem, unknown>] : []),
   ]
@@ -297,6 +311,7 @@ export default function CategoryPage() {
   const [flyTarget, setFlyTarget] = useState<FlyTarget | null>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [reclassifyTarget, setReclassifyTarget] = useState<ReclassifyTarget | null>(null)
+  const [moveTarget, setMoveTarget] = useState<MoveTarget | null>(null)
 
   /** Open the reclassify dialog for a highlight (uses its source post). */
   const handleReclassify = useCallback((item: AnalysisItem) => {
@@ -309,6 +324,13 @@ export default function CategoryPage() {
       currentCategory: categoryName,
       label,
     })
+  }, [category?.output_fields, categoryName])
+
+  /** Open the move dialog for an item (relocates the item itself). */
+  const handleMove = useCallback((item: AnalysisItem) => {
+    const titleKey = category?.output_fields?.[0]?.key ?? ''
+    const label = titleKey ? String(item.item_data[titleKey] ?? '') || undefined : undefined
+    setMoveTarget({ analysisItemId: item.id, currentCategory: categoryName, label })
   }, [category?.output_fields, categoryName])
 
   // Derive controlled state from URL search params so the page is
@@ -802,7 +824,7 @@ export default function CategoryPage() {
   const [modalSearching, setModalSearching] = useState(false)
 
   const columns = useMemo(() => {
-    const base = buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick, travelLocations, handleReclassify)
+    const base = buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick, travelLocations, handleReclassify, handleMove)
 
     if (isBoardGames) {
       // Cover art column
@@ -1462,7 +1484,7 @@ export default function CategoryPage() {
     }
 
     return base
-  }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations, handleReclassify,
+  }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations, handleReclassify, handleMove,
       isBoardGames, bggLinks, isMtg, isAnime, isFood, isMusic, spotifyLinks, recipeCards, slug,
       isVideoGames, malAuth.isAuthenticated, malLibrary, malLinks, malAddingItemId, malUpdatingId,
       updateMALStatus, updateMALScore, searchMAL, deleteMALLink,
@@ -1980,6 +2002,7 @@ export default function CategoryPage() {
       </div>
 
       <ReclassifyDialog target={reclassifyTarget} onClose={() => setReclassifyTarget(null)} />
+      <MoveDialog target={moveTarget} onClose={() => setMoveTarget(null)} />
     </div>
   )
 }

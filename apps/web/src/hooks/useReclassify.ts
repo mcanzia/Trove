@@ -53,6 +53,22 @@ export async function startReclassify(input: {
   return (await res.json()) as ReclassifyJob
 }
 
+/** Enqueue a move job: relocate one extracted item into another category. */
+export async function startMove(input: {
+  analysisItemId: number
+  targetCategory: string
+}): Promise<ReclassifyJob> {
+  const res = await api.api['sync-jobs'].move.$post({
+    json: { analysisItemId: input.analysisItemId, targetCategory: input.targetCategory },
+  })
+  if (!res.ok) {
+    if (res.status === 403) throw new Error('pending_approval')
+    if (res.status === 409) throw new Error('already in that category')
+    throw new Error(`Couldn't start move (${res.status})`)
+  }
+  return (await res.json()) as ReclassifyJob
+}
+
 /** Commit the candidates the user selected (by index) from a finished preview. */
 export async function commitReclassify(jobId: string, indexes: number[]): Promise<{ added: number }> {
   const res = await api.api['sync-jobs'].reclassify.commit.$post({ json: { jobId, indexes } })
