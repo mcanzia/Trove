@@ -25,10 +25,16 @@ export interface ProviderUsage {
   tokens: number
   lastSeen: string | null
   latestStatus: string
-  models: string[]
+  models: ModelStat[]
   tasks: string[]
   rateLimit: RateLimit | null
   status: ProviderStatus
+}
+
+export interface ModelStat {
+  model: string
+  calls: number
+  tokens: number
 }
 
 export interface TaskCounts {

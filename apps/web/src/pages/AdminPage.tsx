@@ -76,6 +76,18 @@ function SummaryCard({ icon: Icon, label, value, sub, isLoading, tone = 'default
 }
 
 /** Compact "remaining/limit" headroom from captured rate-limit headers. */
+/** Compact token count: 1234 → "1.2k", 2_500_000 → "2.5M". */
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
+
+/** One-line "model · 1.2k tok" summary, for the compact (mobile) view. */
+function modelsSummary(models: ProviderUsage['models']): string {
+  return models.map((m) => (m.tokens > 0 ? `${m.model} · ${fmtTokens(m.tokens)} tok` : m.model)).join(', ')
+}
+
 function headroom(p: ProviderUsage): { label: string; title: string } {
   const r = p.rateLimit?.requests
   const t = p.rateLimit?.tokens
@@ -176,7 +188,7 @@ function GeminiPanel({ models }: { models: GeminiModelUsage[] }) {
 // AdminPage
 // ---------------------------------------------------------------------------
 export default function AdminPage() {
-  const [days, setDays] = useState<(typeof WINDOWS)[number]>(7)
+  const [days, setDays] = useState<(typeof WINDOWS)[number]>(1)
   const { data, isLoading, error } = useAiUsage(days)
   const { data: live } = useOpenRouterLive()
   const { data: cf } = useCloudflareLive()
@@ -299,8 +311,14 @@ export default function AdminPage() {
                   <TableCell className="font-medium">
                     {p.provider}
                     {p.models.length > 0 && (
-                      <span className="block max-w-[220px] truncate text-[11px] text-muted-foreground">
-                        {p.models.join(', ')}
+                      <span className="block max-w-[260px] text-[11px] text-muted-foreground">
+                        {p.models.map((m) => (
+                          <span key={m.model} className="block truncate">
+                            {m.model}
+                            {m.tokens > 0 && <> · {fmtTokens(m.tokens)} tok</>}
+                            {m.calls > 0 && <> · {m.calls.toLocaleString()} call{m.calls === 1 ? '' : 's'}</>}
+                          </span>
+                        ))}
                       </span>
                     )}
                   </TableCell>
@@ -343,7 +361,7 @@ export default function AdminPage() {
                   <div className="min-w-0">
                     <div className="font-medium">{p.provider}</div>
                     {p.models.length > 0 && (
-                      <div className="truncate text-[11px] text-muted-foreground">{p.models.join(', ')}</div>
+                      <div className="truncate text-[11px] text-muted-foreground">{modelsSummary(p.models)}</div>
                     )}
                   </div>
                   <StatusChip status={p.status} />
