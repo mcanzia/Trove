@@ -22,6 +22,7 @@ export interface ProviderUsage {
   error: number
   successRate: number
   costUsd: number
+  tokens: number
   lastSeen: string | null
   latestStatus: string
   models: string[]
@@ -37,6 +38,7 @@ export interface TaskCounts {
   budget: number
   error: number
   costUsd: number
+  tokens: number
 }
 
 export interface DayCounts extends TaskCounts {
@@ -48,6 +50,7 @@ export interface AiUsage {
   generatedAt: string
   totalCalls: number
   totalCostUsd: number
+  totalTokens: number
   lastEventAt: string | null
   lastRunId: string | null
   providers: ProviderUsage[]

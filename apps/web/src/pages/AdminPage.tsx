@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Activity, AlertTriangle, CheckCircle2, CircleDollarSign, Clock, Cpu, Zap } from 'lucide-react'
+import { Activity, AlertTriangle, CheckCircle2, CircleDollarSign, Clock, Cpu, Hash, Zap } from 'lucide-react'
 import { useAiUsage, useOpenRouterLive, useCloudflareLive, useGeminiLive, type ProviderStatus, type ProviderUsage, type GeminiModelUsage } from '@/hooks/useAiUsage'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -212,12 +212,19 @@ export default function AdminPage() {
       </div>
 
       {/* Summary cards */}
-      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-6">
         <SummaryCard
           icon={Activity}
           label="Total AI calls"
           value={data ? data.totalCalls.toLocaleString() : '—'}
           sub={`over ${days} day${days > 1 ? 's' : ''}`}
+          isLoading={isLoading}
+        />
+        <SummaryCard
+          icon={Hash}
+          label="Tokens (window)"
+          value={data?.totalTokens ? data.totalTokens.toLocaleString() : '—'}
+          sub="prompt + completion"
           isLoading={isLoading}
         />
         <SummaryCard
@@ -278,6 +285,7 @@ export default function AdminPage() {
                 <TableHead className="text-right">Success</TableHead>
                 <TableHead>Mix</TableHead>
                 <TableHead className="text-right">Headroom</TableHead>
+                <TableHead className="text-right">Tokens</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">Last seen</TableHead>
                 <TableHead>Tasks</TableHead>
@@ -310,6 +318,7 @@ export default function AdminPage() {
                   <TableCell className="text-right tabular-nums text-muted-foreground" title={headroom(p).title}>
                     {headroom(p).label}
                   </TableCell>
+                  <TableCell className="text-right tabular-nums">{p.tokens > 0 ? p.tokens.toLocaleString() : '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">{p.costUsd > 0 ? fmtUsd(p.costUsd) : '—'}</TableCell>
                   <TableCell className="text-right text-muted-foreground tabular-nums">
                     <span className="inline-flex items-center gap-1"><Clock size={12} aria-hidden />{relTime(p.lastSeen)}</span>
@@ -355,6 +364,7 @@ export default function AdminPage() {
                     <div className="mt-2"><MixBar p={p} /></div>
                     <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       <span title={headroom(p).title}>Headroom <span className="tabular-nums text-foreground">{headroom(p).label}</span></span>
+                      {p.tokens > 0 && <span>Tokens <span className="tabular-nums text-foreground">{p.tokens.toLocaleString()}</span></span>}
                       {p.costUsd > 0 && <span>Cost <span className="tabular-nums text-foreground">{fmtUsd(p.costUsd)}</span></span>}
                       <span className="inline-flex items-center gap-1"><Clock size={12} aria-hidden />{relTime(p.lastSeen)}</span>
                       {p.tasks.length > 0 && <span>Tasks <span className="text-foreground">{p.tasks.join(', ')}</span></span>}
