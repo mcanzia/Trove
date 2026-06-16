@@ -1,8 +1,9 @@
 import { Hono } from 'hono'
 import type { AppEnv } from '../lib/context.js'
 import { env } from '../lib/env.js'
+import { supabaseAdmin } from '../lib/supabaseAdmin.js'
 
-const JOB_COLS = 'id, platform, kind, params, status, phase, counts, error, created_at, started_at, finished_at'
+const JOB_COLS = 'id, platform, kind, params, status, phase, counts, result, error, created_at, started_at, finished_at'
 
 function platformOf(v: unknown): 'reddit' | 'instagram' {
   return v === 'instagram' ? 'instagram' : 'reddit'
@@ -117,6 +118,69 @@ export const syncJobs = new Hono<AppEnv>()
     if (error) return c.json({ error: error.message }, 500)
     await fireDispatch()
     return c.json(data)
+  })
+  // Commit the candidates the user selected from a finished reclassify preview.
+  // Inserts the chosen items (service role) under the job owner's user_id and links
+  // the post to the target category. Idempotent-ish: a committed job is locked.
+  .post('/reclassify/commit', async (c) => {
+    // RLS (owner-scoped select below) already restricts this to the caller's jobs.
+    const supabase = c.get('supabase')
+    const body = (await c.req.json().catch(() => ({}))) as { jobId?: string; indexes?: number[] }
+    const jobId = (body.jobId ?? '').trim()
+    const indexes = Array.isArray(body.indexes) ? body.indexes : []
+    if (!jobId) return c.json({ error: 'jobId is required' }, 400)
+
+    // RLS scopes this to the caller's own jobs, so a user can only commit theirs.
+    const { data: job } = await supabase
+      .from('sync_jobs')
+      .select('id, user_id, kind, status, result')
+      .eq('id', jobId)
+      .maybeSingle()
+    if (!job) return c.json({ error: 'job not found' }, 404)
+    if (job.kind !== 'reclassify') return c.json({ error: 'not a reclassify job' }, 400)
+    if (job.status !== 'succeeded') return c.json({ error: 'job not finished' }, 409)
+
+    const result = (job.result ?? {}) as {
+      candidates?: Record<string, unknown>[]
+      target_category?: string
+      platform?: string
+      source_post_id?: string
+      committed?: boolean
+    }
+    if (result.committed) return c.json({ error: 'already committed' }, 409)
+
+    const candidates = result.candidates ?? []
+    const target = result.target_category ?? ''
+    const platform = platformOf(result.platform)
+    const sourcePostId = result.source_post_id ?? ''
+    const chosen = indexes
+      .filter((i) => Number.isInteger(i) && i >= 0 && i < candidates.length)
+      .map((i) => candidates[i])
+    if (!target || !sourcePostId) return c.json({ error: 'job result missing target/post' }, 400)
+
+    const admin = supabaseAdmin()
+    if (chosen.length) {
+      const rows = chosen.map((item) => ({
+        category_name: target,
+        platform,
+        // item_data is stored as a JSON string in jsonb (matches the sync pipeline).
+        item_data: JSON.stringify(item),
+        source_post_id: sourcePostId,
+        user_id: job.user_id,
+      }))
+      const { error: insErr } = await admin.from('analysis_items').insert(rows)
+      if (insErr) return c.json({ error: insErr.message }, 500)
+
+      // Link the post to the target category (additive). PK (post_id, category_name, platform).
+      await admin.from('post_categories').upsert(
+        { post_id: sourcePostId, category_name: target, platform, user_id: job.user_id },
+        { onConflict: 'post_id,category_name,platform' },
+      )
+    }
+
+    // Lock the job so the same preview can't be committed twice.
+    await admin.from('sync_jobs').update({ result: { ...result, committed: true } }).eq('id', jobId)
+    return c.json({ added: chosen.length })
   })
   // Poll a specific job by id (used by the reclassify dialog). RLS scopes to owner.
   .get('/:id', async (c) => {
