@@ -7,9 +7,21 @@ const JOB_COLS = 'id, platform, kind, params, status, phase, counts, result, err
 
 // Categories whose supplemental enrichment the reclassify-commit can trigger via a
 // kind=enrich worker job. Keep in sync with worker/run_enrich.py's ENRICHERS.
-// (Link enrichments — TMDB/IGDB/MAL/etc. — are added once they're refactored out
-// of sync_to_supabase.py into callable functions.)
-const ENRICHABLE_CATEGORIES = new Set(['Food & Cooking', 'Travel & Destinations'])
+const ENRICHABLE_CATEGORIES = new Set([
+  'Food & Cooking',
+  'Travel & Destinations',
+  'Video Game Recommendations',
+  'Movies & Film Recommendations',
+  'TV Series Recommendations',
+  'Anime & Manga',
+  'Music Recommendations',
+  'Books Worth Reading',
+  'Board Games',
+  'Home & Kitchen Products',
+  'Skincare & Acne Treatment',
+  'Fashion & Beauty',
+  'Tech & Gadgets',
+])
 
 function platformOf(v: unknown): 'reddit' | 'instagram' {
   return v === 'instagram' ? 'instagram' : 'reddit'
