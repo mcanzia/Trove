@@ -126,6 +126,11 @@ export function ReclassifyDialog({
       setCommittedCount(added)
       qc.invalidateQueries({ queryKey: ['analysis_items', selected] })
       qc.invalidateQueries({ queryKey: ['posts-by-category', selected] })
+      // The post now has a highlight, so it drops out of the "saved posts without
+      // extracted highlights" backlog — refresh the category we reclassified FROM.
+      if (added > 0 && target) {
+        qc.invalidateQueries({ queryKey: ['posts-by-category', target.currentCategory] })
+      }
     } catch {
       setCommitError("Couldn't add the selected highlights. Please try again.")
     } finally {
