@@ -29,15 +29,17 @@ type UsageRow = {
   status: string
   cost_usd: number | string | null
   rate_limit: RateLimit | null
+  tokens_total: number | string | null
 }
 
-type Counts = { calls: number; ok: number; quota: number; budget: number; error: number; costUsd: number }
+type Counts = { calls: number; ok: number; quota: number; budget: number; error: number; costUsd: number; tokens: number }
 
-const emptyCounts = (): Counts => ({ calls: 0, ok: 0, quota: 0, budget: 0, error: 0, costUsd: 0 })
+const emptyCounts = (): Counts => ({ calls: 0, ok: 0, quota: 0, budget: 0, error: 0, costUsd: 0, tokens: 0 })
 
-function tally(c: Counts, status: string, cost: number) {
+function tally(c: Counts, status: string, cost: number, tokens = 0) {
   c.calls += 1
   c.costUsd += cost
+  c.tokens += tokens
   if (status === 'ok') c.ok += 1
   else if (status === 'quota') c.quota += 1
   else if (status === 'budget') c.budget += 1
@@ -82,7 +84,7 @@ export const aiUsage = new Hono<AppEnv>()
     for (let from = 0; from < MAX_ROWS; from += PAGE) {
       const { data, error } = await supabase
         .from('ai_usage_events')
-        .select('ts, run_id, provider, model, task, status, cost_usd, rate_limit')
+        .select('ts, run_id, provider, model, task, status, cost_usd, rate_limit, tokens_total')
         .gte('ts', since)
         .order('ts', { ascending: false })
         .range(from, from + PAGE - 1)
@@ -96,10 +98,13 @@ export const aiUsage = new Hono<AppEnv>()
     const byTask: Record<string, Counts> = { text: emptyCounts(), video: emptyCounts(), image: emptyCounts() }
     const byDay = new Map<string, Counts>()
     let totalCostUsd = 0
+    let totalTokens = 0
 
     for (const r of rows) {
       const cost = Number(r.cost_usd ?? 0) || 0
+      const tokens = Number(r.tokens_total ?? 0) || 0
       totalCostUsd += cost
+      totalTokens += tokens
 
       // rows are ts-desc, so the FIRST time we see a provider is its latest event
       let p = providers.get(r.provider)
@@ -107,23 +112,23 @@ export const aiUsage = new Hono<AppEnv>()
         p = { ...emptyCounts(), lastSeen: r.ts, latestStatus: r.status, models: new Set(), tasks: new Set(), rateLimit: null }
         providers.set(r.provider, p)
       }
-      tally(p, r.status, cost)
+      tally(p, r.status, cost, tokens)
       if (r.model) p.models.add(r.model)
       p.tasks.add(r.task)
       // rows are ts-desc → keep the most recent non-null rate-limit snapshot
       if (!p.rateLimit && r.rate_limit) p.rateLimit = r.rate_limit
 
       const taskBucket = byTask[r.task] ?? (byTask[r.task] = emptyCounts())
-      tally(taskBucket, r.status, cost)
+      tally(taskBucket, r.status, cost, tokens)
 
       const day = r.ts.slice(0, 10)
       const d = byDay.get(day) ?? byDay.set(day, emptyCounts()).get(day)!
-      tally(d, r.status, cost)
+      tally(d, r.status, cost, tokens)
     }
 
     type ProviderRow = {
       provider: string; calls: number; ok: number; quota: number; budget: number; error: number
-      successRate: number; costUsd: number; lastSeen: string | null; latestStatus: string
+      successRate: number; costUsd: number; tokens: number; lastSeen: string | null; latestStatus: string
       models: string[]; tasks: string[]; rateLimit: RateLimit | null
       status: 'healthy' | 'throttled' | 'exhausted' | 'idle'
     }
@@ -138,6 +143,7 @@ export const aiUsage = new Hono<AppEnv>()
         error: p.error,
         successRate: p.calls ? p.ok / p.calls : 0,
         costUsd: Number(p.costUsd.toFixed(6)),
+        tokens: p.tokens,
         lastSeen: p.lastSeen as string | null,
         latestStatus: p.latestStatus,
         models: [...p.models],
@@ -153,7 +159,7 @@ export const aiUsage = new Hono<AppEnv>()
     const idle: ProviderRow[] = KNOWN_PROVIDERS.filter((k) => !seen.has(k.provider)).map((k) => ({
       provider: k.provider,
       calls: 0, ok: 0, quota: 0, budget: 0, error: 0,
-      successRate: 0, costUsd: 0,
+      successRate: 0, costUsd: 0, tokens: 0,
       lastSeen: null, latestStatus: 'idle',
       models: k.models, tasks: k.tasks, rateLimit: null,
       status: 'idle' as const,
@@ -161,7 +167,7 @@ export const aiUsage = new Hono<AppEnv>()
     const providerList = [...used, ...idle]
 
     const byDayList = [...byDay.entries()]
-      .map(([date, d]) => ({ date, calls: d.calls, ok: d.ok, quota: d.quota, budget: d.budget, error: d.error, costUsd: Number(d.costUsd.toFixed(6)) }))
+      .map(([date, d]) => ({ date, calls: d.calls, ok: d.ok, quota: d.quota, budget: d.budget, error: d.error, costUsd: Number(d.costUsd.toFixed(6)), tokens: d.tokens }))
       .sort((a, b) => a.date.localeCompare(b.date))
 
     c.header('Cache-Control', 'max-age=60')
@@ -170,6 +176,7 @@ export const aiUsage = new Hono<AppEnv>()
       generatedAt: new Date().toISOString(),
       totalCalls: rows.length,
       totalCostUsd: Number(totalCostUsd.toFixed(6)),
+      totalTokens,
       lastEventAt: rows[0]?.ts ?? null,
       lastRunId: rows[0]?.run_id ?? null,
       providers: providerList,
