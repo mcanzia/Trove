@@ -160,6 +160,7 @@ export const syncJobs = new Hono<AppEnv>()
 
     const result = (job.result ?? {}) as {
       candidates?: Record<string, unknown>[]
+      regroup?: Record<string, { id: number; group: string }>
       target_category?: string
       platform?: string
       source_post_id?: string
@@ -168,12 +169,12 @@ export const syncJobs = new Hono<AppEnv>()
     if (result.committed) return c.json({ error: 'already committed' }, 409)
 
     const candidates = result.candidates ?? []
+    const regroup = result.regroup ?? {}
     const target = result.target_category ?? ''
     const platform = platformOf(result.platform)
     const sourcePostId = result.source_post_id ?? ''
-    const chosen = indexes
-      .filter((i) => Number.isInteger(i) && i >= 0 && i < candidates.length)
-      .map((i) => candidates[i])
+    const validIndexes = indexes.filter((i) => Number.isInteger(i) && i >= 0 && i < candidates.length)
+    const chosen = validIndexes.map((i) => candidates[i])
     if (!target || !sourcePostId) return c.json({ error: 'job result missing target/post' }, 400)
 
     const admin = supabaseAdmin()
@@ -188,6 +189,21 @@ export const syncJobs = new Hono<AppEnv>()
       }))
       const { error: insErr } = await admin.from('analysis_items').insert(rows)
       if (insErr) return c.json({ error: insErr.message }, 500)
+
+      // Nest cross-post duplicates: for each selected candidate that matched an
+      // existing item from another post, tag that existing item with the same
+      // _group so the two cluster together in the UI.
+      const regroupTargets = validIndexes
+        .map((i) => regroup[String(i)])
+        .filter((r): r is { id: number; group: string } => !!r)
+      for (const r of regroupTargets) {
+        const { data: row } = await admin
+          .from('analysis_items').select('item_data').eq('id', r.id).maybeSingle()
+        if (!row) continue
+        const d = (typeof row.item_data === 'string' ? JSON.parse(row.item_data) : (row.item_data ?? {})) as Record<string, unknown>
+        d._group = r.group
+        await admin.from('analysis_items').update({ item_data: JSON.stringify(d) }).eq('id', r.id)
+      }
 
       // Link the post to the target category (additive). PK (post_id, category_name, platform).
       await admin.from('post_categories').upsert(
