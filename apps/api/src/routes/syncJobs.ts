@@ -5,6 +5,12 @@ import { supabaseAdmin } from '../lib/supabaseAdmin.js'
 
 const JOB_COLS = 'id, platform, kind, params, status, phase, counts, result, error, created_at, started_at, finished_at'
 
+// Categories whose supplemental enrichment the reclassify-commit can trigger via a
+// kind=enrich worker job. Keep in sync with worker/run_enrich.py's ENRICHERS.
+// (Link enrichments — TMDB/IGDB/MAL/etc. — are added once they're refactored out
+// of sync_to_supabase.py into callable functions.)
+const ENRICHABLE_CATEGORIES = new Set(['Food & Cooking', 'Travel & Destinations'])
+
 function platformOf(v: unknown): 'reddit' | 'instagram' {
   return v === 'instagram' ? 'instagram' : 'reddit'
 }
@@ -176,6 +182,20 @@ export const syncJobs = new Hono<AppEnv>()
         { post_id: sourcePostId, category_name: target, platform, user_id: job.user_id },
         { onConflict: 'post_id,category_name,platform' },
       )
+
+      // Kick off supplemental enrichment (recipe cards / geocoding) for the new
+      // items if this category has any. Best-effort: a separate kind=enrich job
+      // the worker drains; failure here never blocks the commit.
+      if (ENRICHABLE_CATEGORIES.has(target)) {
+        await admin.from('sync_jobs').insert({
+          user_id: job.user_id,
+          platform,
+          status: 'pending',
+          kind: 'enrich',
+          params: { target_category: target, source_post_id: sourcePostId, platform },
+        })
+        await fireDispatch()
+      }
     }
 
     // Lock the job so the same preview can't be committed twice.
