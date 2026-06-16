@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import type { AppEnv } from '../lib/context.js'
 import { env } from '../lib/env.js'
 
-const JOB_COLS = 'id, platform, status, phase, counts, error, created_at, started_at, finished_at'
+const JOB_COLS = 'id, platform, kind, params, status, phase, counts, error, created_at, started_at, finished_at'
 
 function platformOf(v: unknown): 'reddit' | 'instagram' {
   return v === 'instagram' ? 'instagram' : 'reddit'
@@ -77,8 +77,54 @@ export const syncJobs = new Hono<AppEnv>()
       .from('sync_jobs')
       .select(JOB_COLS)
       .eq('platform', platform)
+      .eq('kind', 'sync')
       .order('created_at', { ascending: false })
       .limit(1)
     if (error) return c.json({ error: error.message }, 500)
     return c.json(data?.[0] ?? null)
+  })
+  // Reclassify ONE stored post into a target category (additive). Rides the same
+  // queue; the worker branches on kind='reclassify'. No credentials needed.
+  .post('/reclassify', async (c) => {
+    const supabase = c.get('supabase')
+    const userId = c.get('userId')
+
+    const { data: access } = await supabase
+      .from('user_access').select('status').eq('user_id', userId).maybeSingle()
+    if (access?.status !== 'approved') return c.json({ error: 'pending_approval' }, 403)
+
+    const body = (await c.req.json().catch(() => ({}))) as {
+      sourcePostId?: string; platform?: string; targetCategory?: string
+    }
+    const sourcePostId = (body.sourcePostId ?? '').trim()
+    const targetCategory = (body.targetCategory ?? '').trim()
+    if (!sourcePostId || !targetCategory) {
+      return c.json({ error: 'sourcePostId and targetCategory are required' }, 400)
+    }
+    const platform = platformOf(body.platform)
+
+    const { data, error } = await supabase
+      .from('sync_jobs')
+      .insert({
+        user_id: userId,
+        platform,
+        status: 'pending',
+        kind: 'reclassify',
+        params: { source_post_id: sourcePostId, target_category: targetCategory, platform },
+      })
+      .select(JOB_COLS)
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    await fireDispatch()
+    return c.json(data)
+  })
+  // Poll a specific job by id (used by the reclassify dialog). RLS scopes to owner.
+  .get('/:id', async (c) => {
+    const { data, error } = await c.get('supabase')
+      .from('sync_jobs')
+      .select(JOB_COLS)
+      .eq('id', c.req.param('id'))
+      .maybeSingle()
+    if (error) return c.json({ error: error.message }, 500)
+    return c.json(data ?? null)
   })
