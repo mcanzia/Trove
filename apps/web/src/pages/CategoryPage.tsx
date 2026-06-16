@@ -245,6 +245,34 @@ function CityTable({ city, items, columns, search }: CityTableProps) {
   )
 }
 
+/** A collapsible parent for a cluster of related highlights sharing item_data._group
+ *  (e.g. the tips pulled from one reclassified post). */
+function HighlightGroup({ label, items, columns, search }: {
+  label: string
+  items: AnalysisItem[]
+  columns: ColumnDef<AnalysisItem, unknown>[]
+  search: string
+}) {
+  const [open, setOpen] = useState(true)
+  return (
+    <div className="mb-4 overflow-hidden rounded-xl border border-border">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 bg-muted/40 px-4 py-2.5 text-left text-sm font-semibold text-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        aria-expanded={open}
+      >
+        <ChevronDown size={15} className={`text-muted-foreground transition-transform duration-150 ${open ? '' : '-rotate-90'}`} />
+        <Tags size={14} className="text-muted-foreground shrink-0" />
+        <span>{label}</span>
+        <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
+          {items.length}
+        </span>
+      </button>
+      {open && <div className="p-1"><DataTable columns={columns} data={items} globalFilter={search} /></div>}
+    </div>
+  )
+}
+
 // ── page ─────────────────────────────────────────────────────────────────────
 
 // Product categories that get a Shop link column
@@ -397,6 +425,30 @@ export default function CategoryPage() {
     }
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
   }, [isHierarchical, hierarchyKey2, level1Items])
+
+  // ── topic clusters: items tagged with item_data._group (e.g. from reclassifying
+  // one post into many related highlights) collapse under a shared parent. Only for
+  // plain flat categories (not the group_by ones), and only when ≥2 share a label. ──
+  const { groupClusters, ungrouped } = useMemo(() => {
+    const flat = (singleGroupField ? level1Items : items) ?? []
+    if (singleGroupField || isHierarchical) return { groupClusters: [] as [string, AnalysisItem[]][], ungrouped: flat }
+    const map = new Map<string, AnalysisItem[]>()
+    const rest: AnalysisItem[] = []
+    for (const it of flat) {
+      const g = typeof it.item_data._group === 'string' ? it.item_data._group.trim() : ''
+      if (g) {
+        if (!map.has(g)) map.set(g, [])
+        map.get(g)!.push(it)
+      } else rest.push(it)
+    }
+    const clusters: [string, AnalysisItem[]][] = []
+    for (const [label, gItems] of map) {
+      if (gItems.length >= 2) clusters.push([label, gItems])
+      else rest.push(...gItems) // a lone tagged item needs no parent
+    }
+    clusters.sort((a, b) => b[1].length - a[1].length)
+    return { groupClusters: clusters, ungrouped: rest }
+  }, [items, level1Items, singleGroupField, isHierarchical])
 
   // ── columns: hide group-by keys (shown in header/dropdown instead) ──
   const hiddenKeys = useMemo(() => {
@@ -1904,13 +1956,15 @@ export default function CategoryPage() {
           </div>
         )}
 
-        {/* Flat view: single table (language, or no grouping, non-books) */}
+        {/* Flat view: collapsible topic clusters (item_data._group) above a table
+            of everything else. With no clusters this is just the single table. */}
         {!cityGroups && items && !isBooks && (
-          <DataTable
-            columns={columns}
-            data={singleGroupField ? level1Items : items}
-            globalFilter={search}
-          />
+          <>
+            {groupClusters.map(([label, gItems]) => (
+              <HighlightGroup key={label} label={label} items={gItems} columns={columns} search={search} />
+            ))}
+            <DataTable columns={columns} data={ungrouped} globalFilter={search} />
+          </>
         )}
 
         {/* Surface every saved post — classified posts with no extracted
