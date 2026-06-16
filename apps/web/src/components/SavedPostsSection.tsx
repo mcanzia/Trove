@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
-import { ExternalLink, ChevronDown } from 'lucide-react'
+import { ExternalLink, ChevronDown, Tags } from 'lucide-react'
 import { usePostsByCategory } from '@/hooks/usePostsByCategory'
+import type { ReclassifyTarget } from '@/components/ReclassifyDialog'
 import type { CategoryPost, Platform } from '@trove/shared'
 
 function snippet(p: CategoryPost): string {
@@ -8,19 +9,20 @@ function snippet(p: CategoryPost): string {
   return t ? t.slice(0, 160) : '(no text)'
 }
 
-function PostLinkCard({ post }: { post: CategoryPost }) {
+function PostLinkCard({
+  post,
+  onReclassify,
+}: {
+  post: CategoryPost
+  onReclassify?: () => void
+}) {
   const platformDot =
     post.platform === 'reddit'
       ? 'bg-orange-400'
       : 'bg-pink-400'
 
   return (
-    <a
-      href={post.url ?? '#'}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="group flex flex-col gap-2 rounded-xl border border-border bg-card p-3 transition-all hover:border-ring/40 hover:shadow-sm"
-    >
+    <div className="group flex flex-col gap-2 rounded-xl border border-border bg-card p-3 transition-all hover:border-ring/40 hover:shadow-sm">
       {/* Platform dot + meta */}
       <div className="flex items-center gap-2">
         <span className={`h-2 w-2 shrink-0 rounded-full ${platformDot}`} />
@@ -36,11 +38,27 @@ function PostLinkCard({ post }: { post: CategoryPost }) {
         {snippet(post)}
       </p>
 
-      {/* External link */}
-      <span className="mt-auto inline-flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground transition-colors">
-        <ExternalLink size={12} /> Open original
-      </span>
-    </a>
+      {/* Actions */}
+      <div className="mt-auto flex items-center justify-between gap-2 pt-1">
+        <a
+          href={post.url ?? '#'}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ExternalLink size={12} /> Open original
+        </a>
+        {onReclassify && (
+          <button
+            onClick={onReclassify}
+            title="Reclassify this post into another category"
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+          >
+            <Tags size={12} /> Reclassify
+          </button>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -52,10 +70,12 @@ export function SavedPostsSection({
   categoryName,
   platform,
   surfacedPostIds,
+  onReclassify,
 }: {
   categoryName: string
   platform?: Platform
   surfacedPostIds: Set<string>
+  onReclassify?: (target: ReclassifyTarget) => void
 }) {
   const { data: posts } = usePostsByCategory({ categoryName, platform })
   const [open, setOpen] = useState(false)
@@ -89,7 +109,20 @@ export function SavedPostsSection({
       {open && (
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 animate-in fade-in duration-150">
           {thin.map((p) => (
-            <PostLinkCard key={p.post_id} post={p} />
+            <PostLinkCard
+              key={p.post_id}
+              post={p}
+              onReclassify={
+                onReclassify
+                  ? () => onReclassify({
+                      sourcePostId: p.post_id,
+                      platform: p.platform,
+                      currentCategory: categoryName,
+                      label: snippet(p),
+                    })
+                  : undefined
+              }
+            />
           ))}
         </div>
       )}
