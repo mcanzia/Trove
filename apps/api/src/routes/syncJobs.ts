@@ -137,6 +137,52 @@ export const syncJobs = new Hono<AppEnv>()
     await fireDispatch()
     return c.json(data)
   })
+  // Move ONE already-extracted item into a different category (re-maps its fields
+  // to the target schema, links the post, removes the original). Rides the queue;
+  // the worker branches on kind='move'. No credentials needed.
+  .post('/move', async (c) => {
+    const supabase = c.get('supabase')
+    const userId = c.get('userId')
+
+    const { data: access } = await supabase
+      .from('user_access').select('status').eq('user_id', userId).maybeSingle()
+    if (access?.status !== 'approved') return c.json({ error: 'pending_approval' }, 403)
+
+    const body = (await c.req.json().catch(() => ({}))) as {
+      analysisItemId?: number; targetCategory?: string
+    }
+    const analysisItemId = Number(body.analysisItemId)
+    const targetCategory = (body.targetCategory ?? '').trim()
+    if (!Number.isInteger(analysisItemId) || !targetCategory) {
+      return c.json({ error: 'analysisItemId and targetCategory are required' }, 400)
+    }
+
+    // Confirm the item is the caller's and isn't already in the target (RLS scopes this).
+    const { data: item } = await supabase
+      .from('analysis_items')
+      .select('id, category_name, platform')
+      .eq('id', analysisItemId)
+      .maybeSingle()
+    if (!item) return c.json({ error: 'item not found' }, 404)
+    if (item.category_name === targetCategory) {
+      return c.json({ error: 'item is already in that category' }, 409)
+    }
+
+    const { data, error } = await supabase
+      .from('sync_jobs')
+      .insert({
+        user_id: userId,
+        platform: platformOf(item.platform),
+        status: 'pending',
+        kind: 'move',
+        params: { analysis_item_id: analysisItemId, target_category: targetCategory },
+      })
+      .select(JOB_COLS)
+      .single()
+    if (error) return c.json({ error: error.message }, 500)
+    await fireDispatch()
+    return c.json(data)
+  })
   // Commit the candidates the user selected from a finished reclassify preview.
   // Inserts the chosen items (service role) under the job owner's user_id and links
   // the post to the target category. Idempotent-ish: a committed job is locked.
