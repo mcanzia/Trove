@@ -118,12 +118,20 @@ Deno.serve(async (req: Request) => {
 
   // ── Search games ──────────────────────────────────────────────────────────
   if (action === 'search') {
-    const { query, limit = 10 } = body as { query: string; limit?: number }
+    // Sanitise/clamp untrusted input before it reaches the IGDB query string:
+    // strip quotes + backslashes (can't break out of the search literal), cap
+    // length, and clamp limit to a sane integer range.
+    const query = (typeof body.query === 'string' ? body.query : '')
+      .replace(/["\\]/g, '')
+      .slice(0, 200)
+      .trim()
+    if (!query) return json({ error: 'query is required' }, 400)
+    const limit = Math.min(Math.max(Math.trunc(Number(body.limit) || 10), 1), 50)
     try {
       const games = await igdbQuery<IGDBGame[]>(
         'games',
         `fields id,name,cover.image_id,rating,aggregated_rating,genres.name,platforms.name,first_release_date;
-         search "${query.replace(/"/g, '')}";
+         search "${query}";
          limit ${limit};
          where version_parent = null;`,
         clientId,
@@ -147,7 +155,12 @@ Deno.serve(async (req: Request) => {
 
   // ── Get game details by ID ────────────────────────────────────────────────
   if (action === 'game') {
-    const { igdbId } = body as { igdbId: number }
+    // igdbId is interpolated straight into the query — require a positive int so
+    // a string body can't inject extra IGDB query clauses.
+    const igdbId = Math.trunc(Number((body as { igdbId?: unknown }).igdbId))
+    if (!Number.isInteger(igdbId) || igdbId <= 0) {
+      return json({ error: 'igdbId must be a positive integer' }, 400)
+    }
     try {
       const games = await igdbQuery<IGDBGame[]>(
         'games',
@@ -178,7 +191,9 @@ Deno.serve(async (req: Request) => {
   // ── Batch sync: search all titles, 4 at a time to stay under rate limit ──────
   if (action === 'batch-sync') {
     const { titles } = body as { titles: string[] }
-    if (!titles?.length) return json([])
+    if (!Array.isArray(titles) || !titles.length) return json([])
+    // Bound the work a single call can request (each title is its own IGDB query).
+    if (titles.length > 200) return json({ error: 'too many titles (max 200)' }, 400)
 
     const FIELDS   = 'id,name,cover.image_id,rating,aggregated_rating,genres.name,platforms.name,first_release_date'
     const normalise = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')

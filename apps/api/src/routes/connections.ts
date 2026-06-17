@@ -4,6 +4,7 @@ import { env } from '../lib/env.js'
 import { supabaseAdmin } from '../lib/supabaseAdmin.js'
 import { encryptToken } from '../lib/crypto.js'
 import { requireApproved } from '../middleware/auth.js'
+import { rateLimit } from '../middleware/rateLimit.js'
 
 const BROWSER_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) ' +
@@ -83,10 +84,14 @@ async function storeCredential(
   return c.json({ ok: true, username })
 }
 
+// Each credential POST makes an outbound verify call to Reddit/Instagram, so
+// throttle it — a user pastes a cookie occasionally, never in bursts.
+const credentialLimit = rateLimit({ name: 'cred', limit: 10, windowMs: 10 * 60_000 })
+
 export const connections = new Hono<AppEnv>()
   // Storing a credential is a sync feature — approved users only.
-  .use('/reddit/credential', requireApproved)
-  .use('/instagram/credential', requireApproved)
+  .use('/reddit/credential', requireApproved, credentialLimit)
+  .use('/instagram/credential', requireApproved, credentialLimit)
   .get('/', async (c) => {
     const { data, error } = await c.get('supabase')
       .from('connections')

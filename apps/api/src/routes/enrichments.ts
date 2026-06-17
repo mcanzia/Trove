@@ -243,7 +243,8 @@ export const enrichments = new Hono<AppEnv>()
     }
   })
 
-  // ── Writes (service-role; RLS blocks anon writes after the lockdown) ──────────
+  // ── Writes (run under the caller's JWT; owner-scoped RLS confines each row to
+  //    its owner, so a delete/update can only touch the caller's own links) ──────
 
   // BGG — delete only (links are created by the Python sync).
   .delete('/bgg/:analysisItemId', zValidator('param', idParam), async (c) => {

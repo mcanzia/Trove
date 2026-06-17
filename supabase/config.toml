@@ -409,7 +409,10 @@ s3_secret_key = "env(S3_SECRET_KEY)"
 
 [functions.hardcover-proxy]
 enabled = true
-verify_jwt = false
+# Require a Supabase JWT (or the project anon key) — the frontend's
+# supabase.functions.invoke() always attaches one, so this only blocks anonymous
+# internet callers from abusing our server-side Hardcover token / quota.
+verify_jwt = true
 import_map = "./functions/hardcover-proxy/deno.json"
 # Uncomment to specify a custom file path to the entrypoint.
 # Supported file extensions are: .ts, .js, .mjs, .jsx, .tsx
