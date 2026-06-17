@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import type { AppEnv } from '../lib/context.js'
 import { env } from '../lib/env.js'
 import { supabaseAdmin } from '../lib/supabaseAdmin.js'
+import { rateLimit } from '../middleware/rateLimit.js'
 
 const JOB_COLS = 'id, platform, kind, params, status, phase, counts, result, error, created_at, started_at, finished_at'
 
@@ -58,8 +59,13 @@ async function fireDispatch(): Promise<void> {
  *   POST /                  — enqueue a sync for { platform } (or return the in-flight one)
  *   GET  /latest?platform=  — the caller's most recent job for a platform (polling fallback)
  */
+// Enqueue endpoints each insert a job and fire a GitHub repository_dispatch, so
+// cap how fast one user can spawn them. Applied per-POST (not via .use) so the
+// GET polling routes (/latest, /:id) stay unthrottled.
+const enqueueLimit = rateLimit({ name: 'enqueue', limit: 30, windowMs: 10 * 60_000 })
+
 export const syncJobs = new Hono<AppEnv>()
-  .post('/', async (c) => {
+  .post('/', enqueueLimit, async (c) => {
     const supabase = c.get('supabase')
     const userId = c.get('userId')
 
@@ -104,7 +110,7 @@ export const syncJobs = new Hono<AppEnv>()
   })
   // Reclassify ONE stored post into a target category (additive). Rides the same
   // queue; the worker branches on kind='reclassify'. No credentials needed.
-  .post('/reclassify', async (c) => {
+  .post('/reclassify', enqueueLimit, async (c) => {
     const supabase = c.get('supabase')
     const userId = c.get('userId')
 
@@ -140,7 +146,7 @@ export const syncJobs = new Hono<AppEnv>()
   // Move ONE already-extracted item into a different category (re-maps its fields
   // to the target schema, links the post, removes the original). Rides the queue;
   // the worker branches on kind='move'. No credentials needed.
-  .post('/move', async (c) => {
+  .post('/move', enqueueLimit, async (c) => {
     const supabase = c.get('supabase')
     const userId = c.get('userId')
 
@@ -186,7 +192,7 @@ export const syncJobs = new Hono<AppEnv>()
   // Commit the candidates the user selected from a finished reclassify preview.
   // Inserts the chosen items (service role) under the job owner's user_id and links
   // the post to the target category. Idempotent-ish: a committed job is locked.
-  .post('/reclassify/commit', async (c) => {
+  .post('/reclassify/commit', enqueueLimit, async (c) => {
     // RLS (owner-scoped select below) already restricts this to the caller's jobs.
     const supabase = c.get('supabase')
     const body = (await c.req.json().catch(() => ({}))) as { jobId?: string; indexes?: number[] }
