@@ -56,13 +56,17 @@ export function ReclassifyDialog({
     setCommitError(null)
   }, [target])
 
-  const categoryOptions = useMemo(
-    () => (categories ?? [])
+  // The current category is selectable too — re-running extraction against it is
+  // additive and idempotent (the worker skips highlights this post already has), so
+  // it's how you mine a post that landed in a category but produced no highlights.
+  // Surface it first, then every other category alphabetically.
+  const categoryOptions = useMemo(() => {
+    const others = (categories ?? [])
       .map((c) => c.name)
       .filter((name) => name !== target?.currentCategory)
-      .sort((a, b) => a.localeCompare(b)),
-    [categories, target?.currentCategory],
-  )
+      .sort((a, b) => a.localeCompare(b))
+    return target?.currentCategory ? [target.currentCategory, ...others] : others
+  }, [categories, target?.currentCategory])
 
   const candidates = useMemo(() => job?.result?.candidates ?? [], [job])
   const succeeded = job?.status === 'succeeded'
@@ -171,8 +175,10 @@ export function ReclassifyDialog({
         {!jobId && (
           <>
             <p className="mb-3 text-sm text-muted-foreground">
-              Analyze this post against another category, then choose which highlights to add. It
-              stays in <span className="font-medium text-foreground">{target.currentCategory}</span>.
+              Analyze this post against a category, then choose which highlights to add. Pick{' '}
+              <span className="font-medium text-foreground">{target.currentCategory}</span> to
+              re-extract highlights it sits in but never produced any for. Always additive — the
+              post keeps its existing categories.
             </p>
             <label className="mb-1 block text-xs font-medium text-foreground">Target category</label>
             <select
@@ -182,7 +188,9 @@ export function ReclassifyDialog({
             >
               <option value="">Choose a category…</option>
               {categoryOptions.map((name) => (
-                <option key={name} value={name}>{name}</option>
+                <option key={name} value={name}>
+                  {name === target.currentCategory ? `${name} (re-extract here)` : name}
+                </option>
               ))}
             </select>
 
