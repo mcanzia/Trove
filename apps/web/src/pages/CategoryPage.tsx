@@ -261,6 +261,14 @@ function CityTable({ city, items, columns, search }: CityTableProps) {
 
 /** A collapsible parent for a cluster of related highlights sharing item_data._group
  *  (e.g. the tips pulled from one reclassified post). */
+/** Mirrors DataTable's `includesString` global filter for one item, so a group
+ *  can tell whether it contains a search match (it filters over item_data). */
+function itemMatchesSearch(item: AnalysisItem, q: string): boolean {
+  if (!q) return true
+  const data = item.item_data ?? {}
+  return Object.values(data).some((v) => v != null && String(v).toLowerCase().includes(q))
+}
+
 function HighlightGroup({ label, items, columns, search }: {
   label: string
   items: AnalysisItem[]
@@ -268,21 +276,27 @@ function HighlightGroup({ label, items, columns, search }: {
   search: string
 }) {
   const [open, setOpen] = useState(true)
+  const q = search.trim().toLowerCase()
+  // While searching: count matches, hide groups with none, and force-expand the
+  // rest so the matching entry is actually visible (not stuck behind a collapse).
+  const matchCount = q ? items.filter((it) => itemMatchesSearch(it, q)).length : items.length
+  if (q && matchCount === 0) return null
+  const expanded = q ? true : open
   return (
     <div className="mb-4 overflow-hidden rounded-xl border border-border">
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex w-full items-center gap-2 bg-muted/40 px-4 py-2.5 text-left text-sm font-semibold text-foreground transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        aria-expanded={open}
+        aria-expanded={expanded}
       >
-        <ChevronDown size={15} className={`text-muted-foreground transition-transform duration-150 ${open ? '' : '-rotate-90'}`} />
+        <ChevronDown size={15} className={`text-muted-foreground transition-transform duration-150 ${expanded ? '' : '-rotate-90'}`} />
         <Tags size={14} className="text-muted-foreground shrink-0" />
         <span>{label}</span>
         <span className="ml-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground tabular-nums">
-          {items.length}
+          {q ? `${matchCount} of ${items.length}` : items.length}
         </span>
       </button>
-      {open && <div className="p-1"><DataTable columns={columns} data={items} globalFilter={search} /></div>}
+      {expanded && <div className="p-1"><DataTable columns={columns} data={items} globalFilter={search} /></div>}
     </div>
   )
 }
