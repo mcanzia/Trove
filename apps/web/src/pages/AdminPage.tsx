@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Activity, AlertTriangle, CheckCircle2, CircleDollarSign, Clock, Cpu, Hash, Zap } from 'lucide-react'
-import { useAiUsage, useOpenRouterLive, useCloudflareLive, useGeminiLive, type ProviderStatus, type ProviderUsage, type GeminiModelUsage } from '@/hooks/useAiUsage'
+import { useAiUsage, useOpenRouterLive, useCloudflareLive, useGeminiLive, type ProviderStatus, type ProviderUsage, type GeminiModelUsage, type CloudflareLive, type GeminiLive } from '@/hooks/useAiUsage'
 import { Skeleton } from '@/components/ui/skeleton'
 import { EmptyState } from '@/components/ui/EmptyState'
 import { UsersPanel } from '@/components/admin/UsersPanel'
@@ -75,7 +75,6 @@ function SummaryCard({ icon: Icon, label, value, sub, isLoading, tone = 'default
   )
 }
 
-/** Compact "remaining/limit" headroom from captured rate-limit headers. */
 /** Compact token count: 1234 → "1.2k", 2_500_000 → "2.5M". */
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -88,15 +87,45 @@ function modelsSummary(models: ProviderUsage['models']): string {
   return models.map((m) => (m.tokens > 0 ? `${m.model} · ${fmtTokens(m.tokens)} tok` : m.model)).join(', ')
 }
 
-function headroom(p: ProviderUsage): { label: string; title: string } {
+/**
+ * Best-available "daily quota" signal for a provider, normalised to used/limit so
+ * it can render as a usage bar (how much of today's free allotment is gone).
+ * Sources, in priority order:
+ *   - Cloudflare → authoritative neurons/day feed
+ *   - Gemini → authoritative per-model requests/day (Cloud Monitoring); shows the
+ *     most-consumed model (full breakdown is in the Gemini panel below)
+ *   - everyone else → the provider's own rate-limit headers (requests, else tokens)
+ * Returns null when the provider doesn't report a daily quota.
+ */
+function dailyQuota(
+  p: ProviderUsage,
+  cf?: CloudflareLive,
+  gemini?: GeminiLive,
+): { used: number; limit: number; unit: string; title: string } | null {
+  if (p.provider === 'cloudflare' && cf?.available && cf.dailyFreeNeurons != null && cf.neuronsToday != null) {
+    const left = cf.neuronsRemaining ?? Math.max(cf.dailyFreeNeurons - cf.neuronsToday, 0)
+    return { used: cf.neuronsToday, limit: cf.dailyFreeNeurons, unit: 'neurons',
+      title: `${left.toLocaleString()} of ${cf.dailyFreeNeurons.toLocaleString()} free neurons left today` }
+  }
+  if (p.provider === 'gemini' && gemini?.available && gemini.models?.length) {
+    const withLimit = gemini.models.filter((m) => m.rpd.limit != null)
+    const worst = withLimit.sort((a, b) => (b.rpd.used / (b.rpd.limit ?? 1)) - (a.rpd.used / (a.rpd.limit ?? 1)))[0]
+    if (worst && worst.rpd.limit != null) {
+      return { used: worst.rpd.used, limit: worst.rpd.limit, unit: 'req/day',
+        title: `${worst.model}: ${(worst.rpd.limit - worst.rpd.used).toLocaleString()} of ${worst.rpd.limit.toLocaleString()} requests left today (see Gemini panel for all models)` }
+    }
+  }
   const r = p.rateLimit?.requests
+  if (r && r.remaining != null && r.limit != null) {
+    return { used: Math.max(r.limit - r.remaining, 0), limit: r.limit, unit: 'requests',
+      title: `${r.remaining.toLocaleString()} of ${r.limit.toLocaleString()} requests left${r.reset ? ` · resets ${r.reset}` : ''}` }
+  }
   const t = p.rateLimit?.tokens
-  if ((!r || r.remaining == null) && (!t || t.remaining == null)) return { label: '—', title: 'no rate-limit headers' }
-  const label = r && r.remaining != null ? `${r.remaining.toLocaleString()}${r.limit != null ? `/${r.limit.toLocaleString()}` : ''}` : '—'
-  const parts: string[] = []
-  if (r?.remaining != null) parts.push(`requests: ${r.remaining}${r.limit != null ? `/${r.limit}` : ''}${r.reset ? ` (resets ${r.reset})` : ''}`)
-  if (t?.remaining != null) parts.push(`tokens: ${t.remaining}${t.limit != null ? `/${t.limit}` : ''}${t.reset ? ` (resets ${t.reset})` : ''}`)
-  return { label, title: parts.join(' · ') }
+  if (t && t.remaining != null && t.limit != null) {
+    return { used: Math.max(t.limit - t.remaining, 0), limit: t.limit, unit: 'tokens',
+      title: `${t.remaining.toLocaleString()} of ${t.limit.toLocaleString()} tokens left${t.reset ? ` · resets ${t.reset}` : ''}` }
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -296,8 +325,8 @@ export default function AdminPage() {
                 <TableHead className="text-right">Calls</TableHead>
                 <TableHead className="text-right">Success</TableHead>
                 <TableHead>Mix</TableHead>
-                <TableHead className="text-right">Headroom</TableHead>
-                <TableHead className="text-right">Tokens</TableHead>
+                <TableHead className="text-right">Daily quota (used)</TableHead>
+                <TableHead className="text-right">Tokens ({days}d)</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">Last seen</TableHead>
                 <TableHead>Tasks</TableHead>
@@ -333,8 +362,18 @@ export default function AdminPage() {
                     )}
                   </TableCell>
                   <TableCell>{unused ? <span className="text-muted-foreground">—</span> : <MixBar p={p} />}</TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground" title={headroom(p).title}>
-                    {headroom(p).label}
+                  <TableCell className="text-right tabular-nums">
+                    {(() => {
+                      const q = dailyQuota(p, cf, gemini)
+                      return q ? (
+                        <span className="inline-flex items-center justify-end gap-1.5" title={q.title}>
+                          <UsageBar used={q.used} limit={q.limit} />
+                          <span className="text-[10px] text-muted-foreground">{q.unit}</span>
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground" title="this provider doesn't report a daily quota">—</span>
+                      )
+                    })()}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{p.tokens > 0 ? p.tokens.toLocaleString() : '—'}</TableCell>
                   <TableCell className="text-right tabular-nums">{p.costUsd > 0 ? fmtUsd(p.costUsd) : '—'}</TableCell>
@@ -381,7 +420,16 @@ export default function AdminPage() {
                     </div>
                     <div className="mt-2"><MixBar p={p} /></div>
                     <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                      <span title={headroom(p).title}>Headroom <span className="tabular-nums text-foreground">{headroom(p).label}</span></span>
+                      {(() => {
+                        const q = dailyQuota(p, cf, gemini)
+                        return q ? (
+                          <span title={q.title}>Quota left{' '}
+                            <span className="tabular-nums text-foreground">
+                              {Math.max(q.limit - q.used, 0).toLocaleString()}/{q.limit.toLocaleString()}
+                            </span> {q.unit}
+                          </span>
+                        ) : null
+                      })()}
                       {p.tokens > 0 && <span>Tokens <span className="tabular-nums text-foreground">{p.tokens.toLocaleString()}</span></span>}
                       {p.costUsd > 0 && <span>Cost <span className="tabular-nums text-foreground">{fmtUsd(p.costUsd)}</span></span>}
                       <span className="inline-flex items-center gap-1"><Clock size={12} aria-hidden />{relTime(p.lastSeen)}</span>
@@ -411,6 +459,17 @@ export default function AdminPage() {
             </span>
           ))}
         </div>
+      )}
+
+      {/* Quota explainer */}
+      {data && data.providers.some((p) => p.calls > 0) && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground">Daily quota left</span> = today's free-tier allotment consumed vs the limit
+          (bar fills as you use it; hover for exactly how much is left and when it resets). Cloudflare uses its neurons/day feed,
+          Gemini its authoritative requests/day (full per-model breakdown below), others their rate-limit headers; “—” means the
+          provider doesn't report a daily quota. <span className="font-medium text-foreground">Tokens ({days}d)</span> is total
+          prompt + completion tokens over the selected window.
+        </p>
       )}
 
       {/* Per-task footer */}
