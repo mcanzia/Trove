@@ -227,8 +227,18 @@ Deno.serve(async (req: Request) => {
           const orig    = chunk[j]
           const games   = results[j]
           if (!games.length) continue
-          // Prefer exact normalised match, fall back to top search result
-          const match = games.find((g) => normalise(g.name) === normalise(orig)) ?? games[0]
+          // Exact normalised match, else an either-way substring match (handles
+          // subtitles / abbreviations), else NO match. We deliberately do NOT fall
+          // back to games[0] (top search hit) — that linked unrelated-but-popular
+          // games (e.g. "Humanity" → "Human Error"). No cover beats a wrong cover.
+          const normO = normalise(orig)
+          if (!normO) continue
+          const match = games.find((g) => normalise(g.name) === normO)
+            ?? games.find((g) => {
+              const t = normalise(g.name)
+              return t && (t.includes(normO) || normO.includes(t))
+            })
+          if (!match) continue
           out.push({
             title:       orig,
             igdbId:      match.id,
