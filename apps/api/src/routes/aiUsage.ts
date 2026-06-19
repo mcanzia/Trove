@@ -253,8 +253,9 @@ export const aiUsage = new Hono<AppEnv>()
         return c.json({ available: true as const, error: body.errors[0]?.message ?? 'analytics query failed' })
       }
       const groups = body.data?.viewer?.accounts?.[0]?.aiInferenceAdaptiveGroups ?? []
-      const byDay = groups.map((g) => ({ date: g.dimensions.date, neurons: g.sum.totalNeurons, requests: g.count }))
-      const todayNeurons = byDay.find((d) => d.date === today)?.neurons ?? 0
+      // Cloudflare reports neurons as a float; round to whole neurons for display.
+      const byDay = groups.map((g) => ({ date: g.dimensions.date, neurons: Math.round(g.sum.totalNeurons), requests: g.count }))
+      const todayNeurons = Math.round(byDay.find((d) => d.date === today)?.neurons ?? 0)
 
       c.header('Cache-Control', 'max-age=300')
       return c.json({
