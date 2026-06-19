@@ -324,7 +324,6 @@ export default function AdminPage() {
                 <TableHead>Status</TableHead>
                 <TableHead className="text-right">Calls</TableHead>
                 <TableHead className="text-right">Success</TableHead>
-                <TableHead>Mix</TableHead>
                 <TableHead className="text-right">Daily quota (used)</TableHead>
                 <TableHead className="text-right">Tokens ({days}d)</TableHead>
                 <TableHead className="text-right">Last seen</TableHead>
@@ -354,13 +353,16 @@ export default function AdminPage() {
                   <TableCell className="text-right tabular-nums">{unused ? '—' : p.calls.toLocaleString()}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {unused ? <span className="text-muted-foreground">—</span> : (
-                      <span className="inline-flex items-center gap-1">
-                        {p.successRate >= 0.95 && <CheckCircle2 size={13} className="text-emerald-500" aria-hidden />}
-                        {(p.successRate * 100).toFixed(0)}%
-                      </span>
+                      <div className="flex flex-col items-end gap-1">
+                        <span className="inline-flex items-center gap-1">
+                          {p.successRate >= 0.95 && <CheckCircle2 size={13} className="text-emerald-500" aria-hidden />}
+                          {(p.successRate * 100).toFixed(0)}%
+                        </span>
+                        {/* Outcome mix (ok/quota/budget/error) — only meaningful when some failed */}
+                        {p.ok < p.calls && <MixBar p={p} />}
+                      </div>
                     )}
                   </TableCell>
-                  <TableCell>{unused ? <span className="text-muted-foreground">—</span> : <MixBar p={p} />}</TableCell>
                   <TableCell className="text-right tabular-nums">
                     {(() => {
                       const q = dailyQuota(p, cf, gemini)
@@ -416,7 +418,7 @@ export default function AdminPage() {
                         </span>
                       </span>
                     </div>
-                    <div className="mt-2"><MixBar p={p} /></div>
+                    {p.ok < p.calls && <div className="mt-2"><MixBar p={p} /></div>}
                     <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       {(() => {
                         const q = dailyQuota(p, cf, gemini)
@@ -440,10 +442,10 @@ export default function AdminPage() {
         </div>
       )}
 
-      {/* Mix legend */}
-      {data && data.providers.some((p) => p.calls > 0) && (
+      {/* Mix legend — only when a mix bar is actually shown (some calls failed) */}
+      {data && data.providers.some((p) => p.calls > 0 && p.ok < p.calls) && (
         <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          <span>Mix:</span>
+          <span>Outcome mix (under Success):</span>
           {([
             ['bg-emerald-500', 'ok — succeeded'],
             ['bg-amber-500', 'quota — rate/quota limit'],
