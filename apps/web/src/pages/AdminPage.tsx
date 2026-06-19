@@ -327,7 +327,6 @@ export default function AdminPage() {
                 <TableHead>Mix</TableHead>
                 <TableHead className="text-right">Daily quota (used)</TableHead>
                 <TableHead className="text-right">Tokens ({days}d)</TableHead>
-                <TableHead className="text-right">Cost</TableHead>
                 <TableHead className="text-right">Last seen</TableHead>
                 <TableHead>Tasks</TableHead>
               </TableRow>
@@ -376,7 +375,6 @@ export default function AdminPage() {
                     })()}
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{p.tokens > 0 ? p.tokens.toLocaleString() : '—'}</TableCell>
-                  <TableCell className="text-right tabular-nums">{p.costUsd > 0 ? fmtUsd(p.costUsd) : '—'}</TableCell>
                   <TableCell className="text-right text-muted-foreground tabular-nums">
                     <span className="inline-flex items-center gap-1"><Clock size={12} aria-hidden />{relTime(p.lastSeen)}</span>
                   </TableCell>
@@ -431,7 +429,6 @@ export default function AdminPage() {
                         ) : null
                       })()}
                       {p.tokens > 0 && <span>Tokens <span className="tabular-nums text-foreground">{p.tokens.toLocaleString()}</span></span>}
-                      {p.costUsd > 0 && <span>Cost <span className="tabular-nums text-foreground">{fmtUsd(p.costUsd)}</span></span>}
                       <span className="inline-flex items-center gap-1"><Clock size={12} aria-hidden />{relTime(p.lastSeen)}</span>
                       {p.tasks.length > 0 && <span>Tasks <span className="text-foreground">{p.tasks.join(', ')}</span></span>}
                     </div>
