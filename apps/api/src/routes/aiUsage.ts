@@ -36,6 +36,37 @@ type Counts = { calls: number; ok: number; quota: number; budget: number; error:
 
 const emptyCounts = (): Counts => ({ calls: 0, ok: 0, quota: 0, budget: 0, error: 0, costUsd: 0, tokens: 0 })
 
+// Usage windows are anchored to PACIFIC midnight, not a rolling 24h: the 1d tab
+// should mean "since today's quota reset" (Gemini — the primary free-tier quota —
+// resets ~midnight Pacific), and multi-day windows are the last N *calendar* days
+// (incl. today). DST-correct via Intl, no extra deps.
+const PACIFIC_TZ = 'America/Los_Angeles'
+
+const partGetter = (parts: Intl.DateTimeFormatPart[]) =>
+  (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((p) => p.type === type)?.value ?? 0)
+
+/** How far `tz` is ahead of UTC at instant `at`, in ms (negative for Pacific). */
+function tzOffsetMs(at: Date, tz: string): number {
+  const g = partGetter(new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }).formatToParts(at))
+  const hour = g('hour') === 24 ? 0 : g('hour') // some envs render midnight as "24"
+  const asUTC = Date.UTC(g('year'), g('month') - 1, g('day'), hour, g('minute'), g('second'))
+  return asUTC - at.getTime()
+}
+
+/** Window start: Pacific midnight (days-1) days ago — so days=1 is "since midnight PT today". */
+function pacificWindowStart(days: number, now = new Date()): Date {
+  const g = partGetter(new Intl.DateTimeFormat('en-CA', {
+    timeZone: PACIFIC_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(now))
+  const guess = Date.UTC(g('year'), g('month') - 1, g('day'), 0, 0, 0)
+  const midnight = guess - tzOffsetMs(new Date(guess), PACIFIC_TZ) // Pacific midnight today, as UTC
+  return new Date(midnight - (days - 1) * 86_400_000)
+}
+
 function tally(c: Counts, status: string, cost: number, tokens = 0) {
   c.calls += 1
   c.costUsd += cost
@@ -74,7 +105,8 @@ export const aiUsage = new Hono<AppEnv>()
   .use('*', requireAdmin)
   .get('/', zValidator('query', z.object({ days: z.coerce.number().int().min(1).max(90).default(7) })), async (c) => {
     const { days } = c.req.valid('query')
-    const since = new Date(Date.now() - days * 86_400_000).toISOString()
+    // Anchor to Pacific midnight so 1d = "since today's reset" (not rolling 24h).
+    const since = pacificWindowStart(days).toISOString()
     const supabase = c.get('supabase')
 
     // Page through the window (PostgREST caps at 1000 rows/response).

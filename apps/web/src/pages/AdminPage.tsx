@@ -258,7 +258,7 @@ export default function AdminPage() {
           icon={Activity}
           label="Total AI calls"
           value={data ? data.totalCalls.toLocaleString() : '—'}
-          sub={`over ${days} day${days > 1 ? 's' : ''}`}
+          sub={days === 1 ? 'since midnight PT' : `last ${days} days (PT)`}
           isLoading={isLoading}
         />
         <SummaryCard
