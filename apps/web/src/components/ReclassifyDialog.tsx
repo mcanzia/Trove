@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import { Loader2, X, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Loader2, X, Sparkles, CheckCircle2, AlertCircle, Circle } from 'lucide-react'
 import { useCategories } from '@/hooks/useCategories'
 import { startReclassify, commitReclassify, useJobById } from '@/hooks/useReclassify'
 import { toSlug } from '@/lib/utils'
@@ -219,18 +219,43 @@ export function ReclassifyDialog({
           </>
         )}
 
-        {/* Running */}
-        {running && (
-          <div className="flex flex-col items-center gap-3 py-6 text-center">
-            <Loader2 size={28} className="animate-spin text-primary" />
-            <p className="text-sm font-medium text-foreground">
-              Analyzing this post for <span className="text-primary">{selected}</span>…
-            </p>
-            <p className="text-xs text-muted-foreground">
-              This runs in the background and can take a minute or two.
-            </p>
-          </div>
-        )}
+        {/* Running — surface the worker's live progress (job status + phase).
+            Steps: queued (waiting for a worker) → reading the post → extracting.
+            There's no sub-step progress inside the LLM call (single, non-streamed),
+            so the phase steps are the finest-grained signal available. */}
+        {running && (() => {
+          // 0 = queued (pending, not yet claimed), 1 = reading post (running/fetch),
+          // 2 = extracting (running/analyze).
+          const activeStep = job?.status === 'running' ? (job.phase === 'analyze' ? 2 : 1) : 0
+          const steps = ['Waiting for a worker', 'Reading the post', `Extracting ${selected} highlights`]
+          return (
+            <div className="flex flex-col gap-3 py-6">
+              <ol className="mx-auto flex flex-col gap-2.5">
+                {steps.map((label, i) => {
+                  const done = i < activeStep
+                  const active = i === activeStep
+                  return (
+                    <li key={i} className="flex items-center gap-2.5 text-sm">
+                      {done ? (
+                        <CheckCircle2 size={16} className="shrink-0 text-emerald-500" />
+                      ) : active ? (
+                        <Loader2 size={16} className="shrink-0 animate-spin text-primary" />
+                      ) : (
+                        <Circle size={16} className="shrink-0 text-muted-foreground/40" />
+                      )}
+                      <span className={done ? 'text-muted-foreground' : active ? 'font-medium text-foreground' : 'text-muted-foreground/60'}>
+                        {label}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ol>
+              <p className="text-center text-xs text-muted-foreground">
+                Runs in the background and can take a minute or two.
+              </p>
+            </div>
+          )
+        })()}
 
         {/* Committed — added items */}
         {committedCount !== null && (
