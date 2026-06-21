@@ -24,11 +24,11 @@ import {
   useSearchHardcoverBook,
   useAddBookByTitle,
   findHardcoverBook,
+  HARDCOVER_STATUS,
   type HardcoverSearchResult,
-  type HardcoverLinkData,
 } from '@/hooks/useHardcoverBooks'
 import { HardcoverSearchModal } from '@/components/HardcoverSearchModal'
-import { BookCard } from '@/components/BookCard'
+import { StarRating } from '@/components/StarRating'
 import { MALSearchModal } from '@/components/MALSearchModal'
 import { IGDBSearchModal } from '@/components/IGDBSearchModal'
 import { TMDBSearchModal } from '@/components/TMDBSearchModal'
@@ -74,6 +74,46 @@ import type { AnalysisItem, OutputField, Platform } from '@/types'
 import type { FlyTarget } from '@/components/TravelMap'
 
 const TravelMap = lazy(() => import('@/components/TravelMap'))
+
+// ── cross-post de-duplication ──────────────────────────────────────────────────
+// Two posts can recommend the same thing (book, anime, …), producing two
+// analysis_items with the same title. Collapse them at render time, keyed off the
+// category's FIRST output_field — the same title-stable identity the backend upsert
+// uses (SavedPosts _stable_upsert_items / _item_title). Mirrors that path's
+// `_normalise_title`: lowercase, strip non-alphanumerics, unicode-aware so non-Latin
+// titles survive. NOT applied to group_by categories (Travel/Language), whose first
+// field (activity/content) isn't a globally-unique title.
+
+function normTitle(s: string): string {
+  return (s || '').toLowerCase().replace(/[^\p{L}\p{N}]/gu, '')
+}
+
+/** Collapse items sharing a normalized title. Keeps first-seen order; the kept row
+ *  is the best representative — prefer one that's enriched/tracked (its id is in
+ *  `enrichedIds`), else the earliest by _first_added/created_at. */
+function dedupeByTitle(
+  items: AnalysisItem[],
+  titleKey: string,
+  enrichedIds: Set<number>,
+): AnalysisItem[] {
+  const added = (it: AnalysisItem) =>
+    String(it.item_data._first_added ?? it.created_at ?? '')
+  const better = (a: AnalysisItem, b: AnalysisItem) => {
+    const ea = enrichedIds.has(a.id), eb = enrichedIds.has(b.id)
+    if (ea !== eb) return ea            // prefer the enriched/tracked row
+    return added(a) < added(b)          // else the earlier one
+  }
+  const at = new Map<string, number>() // normalized title -> index in result
+  const result: AnalysisItem[] = []
+  for (const it of items) {
+    const key = normTitle(String(it.item_data[titleKey] ?? ''))
+    if (!key) { result.push(it); continue }   // untitled rows never merge
+    const i = at.get(key)
+    if (i === undefined) { at.set(key, result.length); result.push(it) }
+    else if (better(it, result[i])) result[i] = it
+  }
+  return result
+}
 
 // ── column builder ────────────────────────────────────────────────────────────
 
@@ -462,29 +502,8 @@ export default function CategoryPage() {
     return Array.from(map.entries()).sort(([a], [b]) => a.localeCompare(b))
   }, [isHierarchical, hierarchyKey2, level1Items])
 
-  // ── topic clusters: items tagged with item_data._group (e.g. from reclassifying
-  // one post into many related highlights) collapse under a shared parent. Only for
-  // plain flat categories (not the group_by ones), and only when ≥2 share a label. ──
-  const { groupClusters, ungrouped } = useMemo(() => {
-    const flat = (singleGroupField ? level1Items : items) ?? []
-    if (singleGroupField || isHierarchical) return { groupClusters: [] as [string, AnalysisItem[]][], ungrouped: flat }
-    const map = new Map<string, AnalysisItem[]>()
-    const rest: AnalysisItem[] = []
-    for (const it of flat) {
-      const g = typeof it.item_data._group === 'string' ? it.item_data._group.trim() : ''
-      if (g) {
-        if (!map.has(g)) map.set(g, [])
-        map.get(g)!.push(it)
-      } else rest.push(it)
-    }
-    const clusters: [string, AnalysisItem[]][] = []
-    for (const [label, gItems] of map) {
-      if (gItems.length >= 2) clusters.push([label, gItems])
-      else rest.push(...gItems) // a lone tagged item needs no parent
-    }
-    clusters.sort((a, b) => b[1].length - a[1].length)
-    return { groupClusters: clusters, ungrouped: rest }
-  }, [items, level1Items, singleGroupField, isHierarchical])
+  // NOTE: topic clusters + cross-post dedup are computed lower down (after the
+  // enrichment-link hooks + isBooks/statusFilter, which the dedup/filter need).
 
   // ── columns: hide group-by keys (shown in header/dropdown instead) ──
   const hiddenKeys = useMemo(() => {
@@ -836,6 +855,63 @@ export default function CategoryPage() {
   const [modalContext, setModalContext] = useState<{ title: string; itemId: number; author: string } | null>(null)
   const [modalResults, setModalResults] = useState<HardcoverSearchResult[]>([])
   const [modalSearching, setModalSearching] = useState(false)
+
+  // ── cross-post de-duplication: collapse items with the same title (first
+  // output_field) into one row, preferring the enriched/tracked copy. Skipped for
+  // group_by categories (Travel/Language) whose first field isn't a unique title. ──
+  const titleKey = category?.output_fields?.[0]?.key
+  const enrichedIds = useMemo(() => {
+    const m = isBooks ? hardcoverLinks
+      : isAnime ? malLinks
+      : isTMDB ? tmdbLinks
+      : isVideoGames ? igdbLinks
+      : isBoardGames ? bggLinks
+      : null
+    return new Set<number>(m ? [...m.keys()] : [])
+  }, [isBooks, isAnime, isTMDB, isVideoGames, isBoardGames, hardcoverLinks, malLinks, tmdbLinks, igdbLinks, bggLinks])
+
+  const dedupedItems = useMemo(() => {
+    const list = items ?? []
+    if (singleGroupField || isHierarchical || !titleKey) return list
+    return dedupeByTitle(list, titleKey, enrichedIds)
+  }, [items, singleGroupField, isHierarchical, titleKey, enrichedIds])
+
+  // ── topic clusters: items tagged with item_data._group (e.g. from reclassifying
+  // one post into many related highlights) collapse under a shared parent. Only for
+  // plain flat categories (not the group_by ones), and only when ≥2 share a label.
+  // Books also honor the Hardcover status-filter pills here. ──
+  const { groupClusters, ungrouped } = useMemo(() => {
+    let flat = (singleGroupField ? level1Items : dedupedItems) ?? []
+    if (isBooks && statusFilter !== 'all') {
+      flat = flat.filter((item) => {
+        const title = String(item.item_data.book_title ?? '')
+        const book = hardcoverLibrary
+          ? findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(item.id)?.hardcoverBookId)
+          : undefined
+        if (statusFilter === 'untracked') return !book
+        if (!book) return false
+        return String(book.statusId) === statusFilter
+      })
+    }
+    if (singleGroupField || isHierarchical) return { groupClusters: [] as [string, AnalysisItem[]][], ungrouped: flat }
+    const map = new Map<string, AnalysisItem[]>()
+    const rest: AnalysisItem[] = []
+    for (const it of flat) {
+      const g = typeof it.item_data._group === 'string' ? it.item_data._group.trim() : ''
+      if (g) {
+        if (!map.has(g)) map.set(g, [])
+        map.get(g)!.push(it)
+      } else rest.push(it)
+    }
+    const clusters: [string, AnalysisItem[]][] = []
+    for (const [label, gItems] of map) {
+      if (gItems.length >= 2) clusters.push([label, gItems])
+      else rest.push(...gItems) // a lone tagged item needs no parent
+    }
+    clusters.sort((a, b) => b[1].length - a[1].length)
+    return { groupClusters: clusters, ungrouped: rest }
+  }, [dedupedItems, level1Items, singleGroupField, isHierarchical,
+      isBooks, statusFilter, hardcoverLibrary, hardcoverLinks])
 
   const columns = useMemo(() => {
     const base = buildColumns(category?.output_fields ?? [], hiddenKeys, handleLocationClick, travelLocations, handleReclassify, handleMove)
@@ -1497,6 +1573,130 @@ export default function CategoryPage() {
       ]
     }
 
+    // ── Hardcover columns (Books) — cover thumbnail + tracking, mirrors Anime/MAL ──
+    if (isBooks) {
+      const indexCol  = base.find((c) => c.id === '_index')
+      const sourceCol = base.find((c) => c.id === '_source')
+      const dynCols   = base.filter((c) => !String(c.id ?? '').startsWith('_'))
+
+      const coverCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_hc_cover',
+        header: '',
+        accessorFn: () => null,
+        cell: ({ row }) => {
+          const coverUrl = hardcoverLinks?.get(row.original.id)?.coverUrl
+          const title    = String(row.original.item_data.book_title ?? '')
+          return (
+            <div className="w-10 h-[60px] rounded overflow-hidden bg-muted/60 flex-none">
+              {coverUrl && <img src={coverUrl} alt={title} className="w-full h-full object-cover" loading="lazy" />}
+            </div>
+          )
+        },
+        enableSorting: false,
+        size: 52,
+      }
+
+      const ratingCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_hc_community',
+        header: 'Hardcover',
+        accessorFn: (row) => hardcoverLinks?.get(row.id)?.hcCommunityRating ?? null,
+        cell: ({ getValue }) => {
+          const r = getValue() as number | null
+          if (r == null) return <span className="text-muted-foreground text-xs">—</span>
+          return <span className="text-xs font-medium text-foreground tabular-nums whitespace-nowrap">{r.toFixed(1)} ★ / 5</span>
+        },
+        enableSorting: true,
+      }
+
+      const trackCol: ColumnDef<AnalysisItem, unknown> = {
+        id: '_hc_status',
+        header: 'Status',
+        accessorFn: (row) => {
+          const title = String(row.item_data.book_title ?? '')
+          const book  = hardcoverLibrary
+            ? findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(row.id)?.hardcoverBookId)
+            : undefined
+          return book ? book.statusId : null
+        },
+        cell: ({ row }) => {
+          const item   = row.original
+          const title  = String(item.item_data.book_title ?? '')
+          const author = String(item.item_data.author ?? '')
+          const hcLink = hardcoverLinks?.get(item.id)
+          const book   = hardcoverLibrary
+            ? findHardcoverBook(hardcoverLibrary, title, hcLink?.hardcoverBookId)
+            : undefined
+
+          if (addingItemId === item.id) {
+            return (
+              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                <svg className="animate-spin h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                </svg>
+                Adding…
+              </span>
+            )
+          }
+          if (!book) {
+            return (
+              <button
+                disabled={addingTitle === title}
+                onClick={() => {
+                  setAddingTitle(title)
+                  setModalContext({ title, itemId: item.id, author })
+                  setModalResults([])
+                  setModalSearching(true)
+                  searchBook.mutate({ title, author }, {
+                    onSuccess: (results) => setModalResults(results),
+                    onSettled: () => { setModalSearching(false); setAddingTitle(null) },
+                  })
+                }}
+                className="text-xs cursor-pointer text-muted-foreground hover:text-foreground underline underline-offset-2 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+              >
+                {addingTitle === title ? 'Searching…' : '+ Add to Hardcover'}
+              </button>
+            )
+          }
+          return (
+            <div className="flex items-center gap-2">
+              <StarRating value={book.rating} onChange={(rating) => updateRating.mutate({ userBookId: book.userBookId, rating })} />
+              <div className="h-3 w-px bg-border" />
+              {updatingStatusId === book.userBookId ? (
+                <span className="text-xs text-muted-foreground animate-pulse">{HARDCOVER_STATUS[book.statusId] ?? '…'}</span>
+              ) : (
+                <select
+                  value={book.statusId}
+                  onChange={(e) => {
+                    setUpdatingStatusId(book.userBookId)
+                    updateStatus.mutate(
+                      { userBookId: book.userBookId, statusId: Number(e.target.value) },
+                      { onSettled: () => setUpdatingStatusId(null) },
+                    )
+                  }}
+                  className="text-xs bg-transparent border border-border rounded-lg pl-2 pr-6 py-1 cursor-pointer text-muted-foreground hover:text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {Object.entries(HARDCOVER_STATUS).map(([id, label]) => (
+                    <option key={id} value={id}>{label}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )
+        },
+        enableSorting: true,
+      }
+
+      return [
+        ...(indexCol ? [indexCol] : []),
+        coverCol,
+        ...dynCols,
+        ratingCol,
+        trackCol,
+        ...(sourceCol ? [sourceCol] : []),
+      ]
+    }
+
     return base
   }, [category?.output_fields, hiddenKeys, handleLocationClick, travelLocations, handleReclassify, handleMove,
       isBoardGames, bggLinks, isMtg, isAnime, isFood, isMusic, spotifyLinks, recipeCards, slug,
@@ -1504,7 +1704,9 @@ export default function CategoryPage() {
       updateMALStatus, updateMALScore, searchMAL, deleteMALLink,
       igdbLinks, deleteIGDBLink, updateIGDBScore, openIGDBModal,
       isTMDB, isMovies, tmdbLinks, deleteTMDBLink, updateTMDBScore, openTMDBModal,
-      productConfig, getShopLink])
+      productConfig, getShopLink,
+      isBooks, hardcoverLinks, hardcoverLibrary, addingItemId, addingTitle, updatingStatusId,
+      searchBook, updateRating, updateStatus, setModalContext, setModalResults, setModalSearching, setAddingTitle, setUpdatingStatusId])
 
   // Flag lookup for the dropdown
   const getOptionLabel = (value: string) => {
@@ -1921,80 +2123,10 @@ export default function CategoryPage() {
           </div>
         )}
 
-        {/* Books: card grid */}
-        {!cityGroups && items && isBooks && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {(singleGroupField ? level1Items : items)
-              .filter((item) => {
-                // Text search
-                if (search) {
-                  const s = search.toLowerCase()
-                  const textMatch =
-                    String(item.item_data.book_title  ?? '').toLowerCase().includes(s) ||
-                    String(item.item_data.author      ?? '').toLowerCase().includes(s) ||
-                    String(item.item_data.genre       ?? '').toLowerCase().includes(s) ||
-                    String(item.item_data.why_read_it ?? '').toLowerCase().includes(s)
-                  if (!textMatch) return false
-                }
-                // Hardcover status filter
-                if (statusFilter !== 'all') {
-                  const title = String(item.item_data.book_title ?? '')
-                  const book  = hardcoverLibrary
-                    ? findHardcoverBook(hardcoverLibrary, title, hardcoverLinks?.get(item.id)?.hardcoverBookId)
-                    : undefined
-                  if (statusFilter === 'untracked') return !book
-                  if (!book) return false
-                  return String(book.statusId) === statusFilter
-                }
-                return true
-              })
-              .map((item) => {
-                const title   = String(item.item_data.book_title ?? '')
-                const author  = String(item.item_data.author ?? '')
-                const hcLink  = hardcoverLinks?.get(item.id) as HardcoverLinkData | undefined
-                const book    = hardcoverLibrary
-                  ? findHardcoverBook(hardcoverLibrary, title, hcLink?.hardcoverBookId)
-                  : undefined
-                return (
-                  <BookCard
-                    key={item.id}
-                    item={item}
-                    book={book}
-                    hcLink={hcLink}
-                    isAdding={addingItemId === item.id}
-                    isSearching={addingTitle === title}
-                    isUpdatingStatus={book != null && updatingStatusId === book.userBookId}
-                    onAddClick={() => {
-                      setAddingTitle(title)
-                      setModalContext({ title, itemId: item.id, author })
-                      setModalResults([])
-                      setModalSearching(true)
-                      searchBook.mutate(
-                        { title, author },
-                        {
-                          onSuccess: (results) => setModalResults(results),
-                          onSettled: () => { setModalSearching(false); setAddingTitle(null) },
-                        },
-                      )
-                    }}
-                    onRatingChange={(rating) => book && updateRating.mutate({ userBookId: book.userBookId, rating })}
-                    onStatusChange={(statusId) => {
-                      if (!book) return
-                      setUpdatingStatusId(book.userBookId)
-                      updateStatus.mutate(
-                        { userBookId: book.userBookId, statusId },
-                        { onSettled: () => setUpdatingStatusId(null) },
-                      )
-                    }}
-                  />
-                )
-              })}
-          </div>
-        )}
-
         {/* Flat view: collapsible topic clusters (item_data._group) above a table
-            of everything else. With no clusters this is just the single table. */}
-        {!cityGroups && items && !isBooks && (
+            of everything else. With no clusters this is just the single table.
+            Books render here too — with their Hardcover cover/status columns. */}
+        {!cityGroups && items && (
           <>
             {groupClusters.map(([label, gItems]) => (
               <HighlightGroup key={label} label={label} items={gItems} columns={columns} search={search} />
