@@ -35,6 +35,7 @@ import {
   Play,
   Code,
   Zap,
+  MonitorPlay,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -298,6 +299,13 @@ const THEMES: Record<string, CategoryTheme> = {
     iconBgClass: 'bg-fuchsia-100 dark:bg-fuchsia-900/30',
     accentClass: 'border-t-fuchsia-400',
     cardBgClass: 'hover:bg-fuchsia-50/50 dark:hover:bg-fuchsia-900/10',
+  },
+  'YouTube & Streaming Channels': {
+    icon: MonitorPlay,
+    iconClass: 'text-rose-500',
+    iconBgClass: 'bg-rose-100 dark:bg-rose-900/30',
+    accentClass: 'border-t-rose-400',
+    cardBgClass: 'hover:bg-rose-50/50 dark:hover:bg-rose-900/10',
   },
 }
 
